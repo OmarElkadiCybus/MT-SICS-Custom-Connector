@@ -1,0 +1,45 @@
+description: MT-SICS Weighing Scale Service
+
+metadata:
+  name: mtsics-weighing-scale-service
+
+resources:
+  scaleConnection:
+    type: Cybus::Connection
+    properties:
+      protocol: Mtsics
+      agentName: MtsicsAgent
+      connection:
+        host: localhost # IP address of the weighing scale
+        port: 4305
+        pollingInterval: "*/5 * * * * *" # Poll for data every 5 seconds
+      
+  # Endpoint for on-demand reading of the stable weight
+  readWeightEndpoint:
+    type: Cybus::Endpoint
+    properties:
+      protocol: mtsics
+      connection: !ref scaleConnection
+      read:
+        address: 'S'
+      agentName: MtsicsAgent
+
+  # Endpoint for taring the scale
+  tareScaleEndpoint:
+    type: Cybus::Endpoint
+    properties:
+      protocol: mtsics
+      connection: !ref scaleConnection
+      write:
+        address: 'T'
+      agentName: MtsicsAgent
+
+  # Endpoint for zeroing the scale
+  zeroScaleEndpoint:
+    type: Cybus::Endpoint
+    properties:
+      protocol: mtsics
+      connection: !ref scaleConnection
+      write:
+        address: 'Z'
+      agentName: MtsicsAgent

@@ -1,12 +1,12 @@
-ARG BASEIMAGE_VERSION=latest
+ARG BASEIMAGE_VERSION=1.10.2
 FROM registry.cybus.io/cybus/protocol-mapper-base:${BASEIMAGE_VERSION}
 
 WORKDIR /app
-COPY ./src ./src/protocols/custom
-COPY ./package.json ./src/protocols/custom
-COPY ./package-lock.json ./src/protocols/custom
+COPY ./src ./src/protocols/mtsics
+COPY ./package.json ./src/protocols/mtsics
+COPY ./package-lock.json ./src/protocols/mtsics
 
-WORKDIR /app/src/protocols/custom
+WORKDIR /app/src/protocols/mtsics
 RUN npm install
 
 ARG NODE_ENV=production

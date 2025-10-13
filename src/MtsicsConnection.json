@@ -1,0 +1,99 @@
+{
+  "$id": "MtsicsConnection",
+  "definitions": {
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "properties": {
+        "host": {
+          "$id": "/properties/host",
+          "type": "string",
+          "title": "Scale host",
+          "description": "IP address or DNS name of the MT-SICS enabled scale.",
+          "minLength": 1,
+          "examples": [
+            "192.168.1.50",
+            "scale-01.local"
+          ]
+        },
+        "port": {
+          "$id": "/properties/port",
+          "type": "integer",
+          "title": "TCP port",
+          "description": "Listening TCP port of the scale.",
+          "default": 4305,
+          "minimum": 1,
+          "maximum": 65535,
+          "examples": [4305]
+        },
+        "eol": {
+          "$id": "/properties/eol",
+          "type": "string",
+          "title": "Command terminator",
+          "description": "Line termination appended to every MT-SICS command.",
+          "default": "\\r\\n",
+          "examples": ["\\r\\n"]
+        },
+        "encoding": {
+          "$id": "/properties/encoding",
+          "type": "string",
+          "title": "Character encoding",
+          "description": "Charset applied to MT-SICS payloads.",
+          "enum": ["ascii"],
+          "default": "ascii"
+        },
+        "responseTimeoutMs": {
+          "$id": "/properties/responseTimeoutMs",
+          "type": "integer",
+          "title": "Response timeout (ms)",
+          "description": "Maximum time to await an MT-SICS response before raising a timeout.",
+          "default": 1500,
+          "minimum": 100,
+          "examples": [1500, 3000]
+        },
+        "connectionStrategy": {
+          "$id": "/properties/connectionStrategy",
+          "type": "object",
+          "title": "Reconnection strategy",
+          "description": "Exponential backoff configuration used when reconnecting to the scale.",
+          "additionalProperties": false,
+          "properties": {
+            "initialDelayMs": {
+              "type": "integer",
+              "description": "Initial wait before the first reconnect attempt.",
+              "default": 1000,
+              "minimum": 0,
+              "examples": [1000]
+            },
+            "maxDelayMs": {
+              "type": "integer",
+              "description": "Upper bound for the reconnect backoff delay.",
+              "default": 30000,
+              "minimum": 0,
+              "examples": [30000]
+            },
+            "backoffFactor": {
+              "type": "number",
+              "description": "Multiplier applied to the reconnect delay after every failure.",
+              "default": 2,
+              "minimum": 1,
+              "examples": [2]
+            }
+          }
+        },
+        "pollingInterval": {
+          "$id": "/properties/pollingInterval",
+          "type": "string",
+          "title": "Polling interval",
+          "description": "Cron-style schedule that defines how often the scale is polled for data.",
+          "default": "*/5 * * * * *",
+          "examples": [
+            "*/1 * * * * *",
+            "0 * * * *"
+          ]
+        }
+      }
+    }
+  }
+}
