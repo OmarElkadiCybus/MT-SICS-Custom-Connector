@@ -198,7 +198,7 @@ class MtsicsConnection extends Connection {
         }
 
         if (address && typeof address === 'object') {
-            const value = address.command || address.address;
+            const value = address.command ;
             if (typeof value === 'string') {
                 return value.trim().toUpperCase();
             }

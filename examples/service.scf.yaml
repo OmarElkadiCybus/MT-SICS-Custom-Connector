@@ -18,28 +18,30 @@ resources:
   readWeightEndpoint:
     type: Cybus::Endpoint
     properties:
-      protocol: mtsics
+      protocol: Mtsics
       connection: !ref scaleConnection
       read:
         address: 'S'
       agentName: MtsicsAgent
 
-  # Endpoint for taring the scale
-  tareScaleEndpoint:
-    type: Cybus::Endpoint
-    properties:
-      protocol: mtsics
-      connection: !ref scaleConnection
-      write:
-        address: 'T'
-      agentName: MtsicsAgent
+  # # Endpoint for taring the scale
+  # tareScaleEndpoint:
+  #   type: Cybus::Endpoint
+  #   properties:
+  #     protocol: Mtsics
+  #     connection: !ref scaleConnection
+  #     write:
+  #       address:
+  #         command: 'T'
+  #     agentName: MtsicsAgent
 
-  # Endpoint for zeroing the scale
-  zeroScaleEndpoint:
-    type: Cybus::Endpoint
-    properties:
-      protocol: mtsics
-      connection: !ref scaleConnection
-      write:
-        address: 'Z'
-      agentName: MtsicsAgent
+  # # Endpoint for zeroing the scale
+  # zeroScaleEndpoint:
+  #   type: Cybus::Endpoint
+  #   properties:
+  #     protocol: Mtsics
+  #     connection: !ref scaleConnection
+  #     write:
+  #       address:
+  #         command: 'Z'
+  #     agentName: MtsicsAgent

@@ -1,12 +1,14 @@
 {
   "$id": "MtsicsEndpoint",
   "definitions": {
-    "address": {
-      "title": "MT-SICS command configuration",
-      "description": "Defines the command verb and optional arguments sent to the scale.",
-      "oneOf": [
-        {
+    "command": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "$id": "/properties/command",
+          "title": "command",
           "type": "string",
+          "description": "The command to be sent to the scale",
           "enum": [
             "S",
             "SI",
@@ -19,37 +21,14 @@
             "T",
             "Z"
           ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["command"],
-          "properties": {
-            "command": {
-              "type": "string",
-              "enum": [
-                "S",
-                "SI",
-                "TA",
-                "PCS",
-                "PW",
-                "REF",
-                "@",
-                "TAC",
-                "T",
-                "Z"
-              ]
-            },
-            "args": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Optional command arguments appended after the verb."
-            }
-          }
         }
-      ]
+      }
     }
+  },
+  "type": "object",
+  "properties": {
+    "subscribe": { "$ref": "#/definitions/command" },
+    "write": { "$ref": "#/definitions/command" },
+    "read": { "$ref": "#/definitions/command" }
   }
 }
