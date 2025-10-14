@@ -10,14 +10,7 @@ const { expect } = chai;
 describe('MtsicsConnection Integration Tests', () => {
     const mockServer = new MockScaleServer();
     const port = 9002;
-    let connection;
-
-    const params = {
-        connection: {
-            host: 'localhost',
-            port: port,
-        }
-    };
+    let client;
 
     before(async () => {
         await mockServer.start(port);
@@ -28,26 +21,26 @@ describe('MtsicsConnection Integration Tests', () => {
     });
 
     beforeEach(() => {
-        connection = new MtsicsConnection(params);
+        client = new MtsicsConnection({ connection: { host: 'localhost', port } });
         mockServer.clearResponses();
     });
 
     afterEach(async () => {
-        if (connection && connection.getState() !== 'disconnected') {
-            await connection.handleDisconnect();
+        if (client) {
+            await client.handleDisconnect();
         }
     });
 
     it('should connect to the mock server', async () => {
-        await connection.handleConnect();
-        expect(connection.getState()).to.equal('connected');
+        await client.handleConnect();
+        expect(client.getState()).to.equal('connected');
     });
 
     it('should handle read command for stable weight', async () => {
-        await connection.handleConnect();
+        await client.handleConnect();
         mockServer.setResponse('S', 'S S      123.45 g');
-        const result = await connection.handleRead({ command: 'S' });
-        expect(result).to.deep.equal({
+        const response = await client.handleRead({ command: 'S' });
+        expect(response).to.deep.equal({
             command: 'S',
             status: 'stable',
             value: 123.45,
@@ -57,10 +50,10 @@ describe('MtsicsConnection Integration Tests', () => {
     });
 
     it('should handle read command for unstable weight', async () => {
-        await connection.handleConnect();
+        await client.handleConnect();
         mockServer.setResponse('SI', 'S D      -10.2 kg');
-        const result = await connection.handleRead({ command: 'SI' });
-        expect(result).to.deep.equal({
+        const response = await client.handleRead({ command: 'SI' });
+        expect(response).to.deep.equal({
             command: 'S',
             status: 'unstable',
             value: -10.2,
@@ -70,42 +63,42 @@ describe('MtsicsConnection Integration Tests', () => {
     });
 
     it('should handle write command with success response', async () => {
-        await connection.handleConnect();
+        await client.handleConnect();
         mockServer.setResponse('Z', 'Z A');
-        const result = await connection.handleWrite({ command: 'Z' });
-        expect(result).to.deep.equal({
+        const response = await client.handleWrite({ command: 'Z' });
+        expect(response).to.deep.equal({
             success: true,
             command: 'Z',
-            status: 'A',
+            status: 'OK',
             raw: 'Z A',
         });
     });
 
     it('should handle syntax error from scale', async () => {
-        await connection.handleConnect();
+        await client.handleConnect();
         mockServer.setResponse('INVALID', 'ES');
-        await expect(connection.handleRead({ command: 'INVALID' }))
+        await expect(client.handleRead({ command: 'INVALID' }))
             .to.be.rejectedWith('MT-SICS: Syntax Error');
     });
     
     it('should handle logical error from scale', async () => {
-        await connection.handleConnect();
+        await client.handleConnect();
         mockServer.setResponse('C', 'EL');
-        await expect(connection.handleRead({ command: 'C' }))
+        await expect(client.handleRead({ command: 'C' }))
             .to.be.rejectedWith('MT-SICS: Logical Error (invalid command)');
     });
 
     it('should handle "command not executable" error from scale', async () => {
-        await connection.handleConnect();
+        await client.handleConnect();
         mockServer.setResponse('S', 'S I'); // "I" for not executable
-        await expect(connection.handleRead({ command: 'S' }))
+        await expect(client.handleRead({ command: 'S' }))
             .to.be.rejectedWith('MT-SICS: Command "S" not executable.');
     });
 
     it('should handle connection loss', (done) => {
-        connection.handleConnect().then(() => {
-            connection.on('connectionLost', () => {
-                expect(connection.getState()).to.equal('connectionLost');
+        client.handleConnect().then(() => {
+            client.on('connectionLost', () => {
+                expect(client.getState()).to.equal('connectionLost');
                 done();
             });
 

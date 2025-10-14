@@ -3,26 +3,62 @@ description: MT-SICS Weighing Scale Service
 metadata:
   name: mtsics-weighing-scale-service
 
+parameters:
+  AgentName:
+    type: string
+    description: The protocol-mapper agent name where the MT-SICS connector is running
+    default: MtsicsAgent
+
+  DeviceHost:
+    type: string
+    description: IP address or DNS name of the MT-SICS enabled scale
+    default: localhost
+
+  DevicePort:
+    type: integer
+    description: Listening TCP port of the scale
+    default: 4305
+
+  ConnectionInitialDelayMs:
+    type: integer
+    description: Initial wait before the first reconnect attempt (ms)
+    default: 1000
+
+  ConnectionMaxDelayMs:
+    type: integer
+    description: Upper bound for the reconnect backoff delay (ms)
+    default: 60000
+
+  ConnectionBackoffFactor:
+    type: number
+    description: Multiplier applied to the reconnect delay after every failure
+    default: 2
+
 resources:
   scaleConnection:
     type: Cybus::Connection
     properties:
       protocol: Mtsics
-      agentName: MtsicsAgent
+      agentName: !ref AgentName
       connection:
-        host: localhost # IP address of the weighing scale
-        port: 4305
-        pollingInterval: "*/5 * * * * *" # Poll for data every 5 seconds
+        host: !ref DeviceHost
+        port: !ref DevicePort
+        # pollingInterval: !ref PollingInterval # REMOVED
+        connectionStrategy:
+          initialDelayMs: !ref ConnectionInitialDelayMs
+          maxDelayMs: !ref ConnectionMaxDelayMs
+          backoffFactor: !ref ConnectionBackoffFactor
       
-  # Endpoint for on-demand reading of the stable weight
+  # Endpoint for on-demand reading of the stable weight (no polling)
   readWeightEndpoint:
     type: Cybus::Endpoint
     properties:
       protocol: Mtsics
       connection: !ref scaleConnection
-      read:
-        address: 'S'
-      agentName: MtsicsAgent
+      subscribe:
+        command: 'S'
+        interval: 10000 # NEW: Polling every 1000ms for this endpoint
+      agentName: !ref AgentName
 
   # # Endpoint for taring the scale
   # tareScaleEndpoint:
@@ -33,7 +69,7 @@ resources:
   #     write:
   #       address:
   #         command: 'T'
-  #     agentName: MtsicsAgent
+  #     agentName: !ref AgentName
 
   # # Endpoint for zeroing the scale
   # zeroScaleEndpoint:
@@ -44,4 +80,4 @@ resources:
   #     write:
   #       address:
   #         command: 'Z'
-  #     agentName: MtsicsAgent
+  #     agentName: !ref AgentName
