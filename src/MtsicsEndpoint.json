@@ -27,7 +27,19 @@
   },
   "type": "object",
   "properties": {
-    "subscribe": { "$ref": "#/definitions/command" },
+    "subscribe": {
+      "type": "object",
+      "properties": {
+        "command": { "$ref": "#/definitions/command/properties/command" },
+        "interval": {
+          "type": "integer",
+          "title": "Polling Interval (ms)",
+          "description": "Polling interval in milliseconds",
+          "default": 1000
+        }
+      },
+      "required": ["command", "interval"]
+    },
     "write": { "$ref": "#/definitions/command" },
     "read": { "$ref": "#/definitions/command" }
   }
