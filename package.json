@@ -17,10 +17,7 @@
     "url": "https://bitbucket.org/cybusio/custom-connector-tcp-example/issues"
   },
   "homepage": "https://bitbucket.org/cybusio/custom-connector-tcp-example#readme",
-  "dependencies": {
-    "node-cron": "^3.0.2",
-    "promise-store-js": "^1.1.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
