@@ -1,97 +1,113 @@
-const { EventEmitter } = require('events');
-const net = require('net');
-const PromiseStore = require('promise-store-js');
+const { EventEmitter } = require('events')
+const net = require('net')
 
-class MtsicsClient extends EventEmitter {
-  constructor(options = {}) {
-    super();
-    this.options = {
-      host: options.host ?? 'localhost',
-      port: options.port ?? 4305,
-      eol: options.eol ?? '\r\n',
-      responseTimeoutMs: options.responseTimeoutMs ?? 1500,
-      encoding: options.encoding ?? 'ascii',
-    };
+const RESPONSE_TIMEOUT_MS = 2000
 
-    this.client = new net.Socket();
-    this.store = new PromiseStore({ timeout: this.options.responseTimeoutMs });
-    this.inBuffer = '';
-    this.commandQueue = [];
-    this.isProcessing = false;
+class Client extends EventEmitter {
+  constructor() {
+    super()
+    this.conn = new net.Socket()
+    this.conn.on('close', (hadError) => this.emit('close', hadError))
+    this.conn.on('error', (err) => this.emit('error', err))
+    this.conn.on('data', (data) => this._handleData(data))
 
-    this.client
-      .on('connect', () => this.emit('connect'))
-      .on('error', (err) => this.emit('error', err))
-      .on('close', (hadError) => this.emit('close', hadError))
-      .on('data', (data) => {
-        try {
-          this._handleData(data);
-        } catch (err) {
-          this.emit('error', err);
-        }
-      });
+    this.commandQueue = []
+    this.isProcessing = false
+    this.responseCallback = null
+    this.responseTimeout = null
+    this.buffer = ''
   }
 
-  async connect() {
+  connect(host, port) {
     return new Promise((resolve, reject) => {
-      this.client.once('connect', resolve);
-      this.client.once('error', reject);
-      this.client.connect({ host: this.options.host, port: this.options.port });
-    });
+      this.conn.once('error', (err) => reject(err))
+      this.conn.connect({ host, port }, () => {
+        this.conn.off('error', reject)
+        resolve()
+      })
+    })
   }
 
   end() {
-    this.client.destroy();
+    this.conn.destroy()
   }
 
-  async sendCommand(command, ...args) {
-    const fullCommand = [command, ...args].filter(Boolean).join(' ');
+  read(address) {
+    return this._sendCommand(address)
+  }
+
+  write(address, data) {
+    // MT-SICS commands are uppercase.
+    const command = String(address || '').toUpperCase()
+    let commandToSend = command
+
+    // Some write commands might include data.
+    // The MT-SICS documentation specifies how parameters are passed.
+    // For example, TA <value> or D "text".
+    // We will assume for now that data is either a single value or quoted string.
+    if (data !== undefined && data !== null) {
+      if (typeof data === 'string' && data.includes(' ')) {
+        commandToSend = `${command} "${data}"`
+      } else {
+        commandToSend = `${command} ${data}`
+      }
+    }
+    return this._sendCommand(commandToSend)
+  }
+
+  _sendCommand(command) {
     return new Promise((resolve, reject) => {
-      this.commandQueue.push({ command: fullCommand, resolve, reject });
-      this._processQueue();
-    });
+      this.commandQueue.push({ command, resolve, reject })
+      this._processQueue()
+    })
   }
 
   _processQueue() {
     if (this.isProcessing || this.commandQueue.length === 0) {
-      return;
+      return
     }
 
-    this.isProcessing = true;
-    const { command, resolve, reject } = this.commandQueue.shift();
+    this.isProcessing = true
+    const { command, resolve, reject } = this.commandQueue.shift()
 
-    const promise = this.store.create(command);
-    promise.then(resolve).catch(reject);
-
-    this.client.write(`${command}${this.options.eol}`, this.options.encoding, (err) => {
+    this.responseCallback = (err, response) => {
       if (err) {
-        this.store.reject(new RegExp(command), err);
-        this.isProcessing = false;
-        this._processQueue();
+        reject(err)
+      } else {
+        resolve(response)
       }
-    });
+      this.isProcessing = false
+      this._processQueue()
+    }
+
+    this.responseTimeout = setTimeout(() => {
+      if (this.responseCallback) {
+        const err = new Error(`Command "${command}" timed out`)
+        this.responseCallback(err)
+        this.responseCallback = null
+      }
+    }, RESPONSE_TIMEOUT_MS)
+
+    this.conn.write(`${command}\r\n`)
   }
 
   _handleData(data) {
-    this.inBuffer += data.toString(this.options.encoding);
+    this.buffer += data.toString()
+    let newlineIndex
+    while ((newlineIndex = this.buffer.indexOf('\r\n')) !== -1) {
+      const response = this.buffer.substring(0, newlineIndex).trim()
+      this.buffer = this.buffer.substring(newlineIndex + 2)
 
-    let eolIndex;
-    while ((eolIndex = this.inBuffer.indexOf(this.options.eol)) !== -1) {
-      const response = this.inBuffer.substring(0, eolIndex).trim();
-      this.inBuffer = this.inBuffer.substring(eolIndex + this.options.eol.length);
-
-      if (response) {
-        const responseCommand = response.split(' ')[0];
-        const commandRegex = new RegExp(`^${responseCommand}`);
-        if (this.store.resolve(commandRegex, response) === 0) {
-          this.emit('unsolicited-data', response);
-        }
+      if (this.responseCallback) {
+        clearTimeout(this.responseTimeout)
+        this.responseCallback(null, response)
+        this.responseCallback = null
+      } else {
+        // Handle unsolicited data if necessary
+        this.emit('unsolicited-data', response)
       }
-
-      this.isProcessing = false;
-      this._processQueue();
     }
   }
 }
 
-module.exports = MtsicsClient;
+module.exports = Client

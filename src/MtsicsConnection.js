@@ -1,230 +1,134 @@
-const Connection = require('Connection');
-const MtsicsClient = require('./Client.js');
+const Connection = require('Connection')
+const Client = require('./Client.js')
 const schema = require('./MtsicsConnection.json');
-const cron = require('node-cron');
 
 class MtsicsConnection extends Connection {
     constructor(params) {
-        super(params);
+        super(params)
 
-        this.client = new MtsicsClient({
-            host: params.connection.host,
-            port: params.connection.port,
-            eol: params.connection.eol,
-            responseTimeoutMs: params.connection.responseTimeoutMs,
-            encoding: params.connection.encoding,
-        });
+        this._host = params.connection.host
+        this._port = params.connection.port
 
-        this.client
+        this._client = new Client()
+        this._client
             .on('error', err => {
-                console.error('MTSICS Client Error:', err.message);
-                this.connectLost();
+                console.log('MtsicsConnection client error:', err.message);
+                this.connectLost(err.message);
             })
-            .on('close', this._onClose.bind(this));
-
-        this.pollingInterval = params.connection.pollingInterval || '*/5 * * * * *';
-        this.cronJob = null;
-        this.mode = 'WEIGHING';
-        this.lastData = {};
+            .on('close', this._onClose.bind(this))
     }
 
+    // Protocol implementation interface method
     static getCustomSchema() {
         return { ...schema };
     }
 
+    // Protocol implementation interface method
     async handleConnect() {
-        try {
-            await this.client.connect();
-            this.connectDone();
-            this._startPolling();
-        } catch (err) {
-            this.connectFailed(err.message);
-        }
+        await this._createConnection();
     }
 
+    // Protocol implementation interface method
     async handleReconnect() {
-        await this.handleDisconnect();
-        await this.handleConnect();
+        await this._closeConnection()
+        await this._createConnection()
     }
 
+    // Protocol implementation interface method
     async handleDisconnect() {
-        this._stopPolling();
-        this.client.end();
-        this.disconnectDone();
+        await this._closeConnection()
     }
 
-    _updateMode(command) {
-        if (['PCS', 'PW', 'REF'].includes(command)) {
-            this.mode = 'COUNTING';
-        }
-        if (command === '@') {
-            this.mode = 'WEIGHING';
-        }
-    }
-
+    // Protocol implementation interface method (called for READ and SUBSCRIBE Endpoints)
     async handleRead(address, requestData = {}) {
-        const command = this._normalizeCommand(address);
-        const args = this._normalizeArgs(address, requestData.args);
-        const response = await this.client.sendCommand(command, ...args);
-        this._updateMode(command);
-        return this._parseResponse(command, response);
+        const rawResponse = await this._client.read(address.command)
+        return this._parseMtsicsResponse(rawResponse)
     }
 
+    // Protocol implementation interface method (called for WRITE Endpoints)
     async handleWrite(address, writeData) {
-        const command = this._normalizeCommand(address);
-        const args = this._normalizeArgs(address, writeData);
-
-        const response = await this.client.sendCommand(command, ...args);
-        this._updateMode(command);
-        return this._parseResponse(command, response);
+        const rawResponse = await this._client.write(address.command, writeData)
+        return this._parseMtsicsResponse(rawResponse)
     }
 
-    _startPolling() {
-        this.cronJob = cron.schedule(this.pollingInterval, async () => {
-            try {
-                const data = await this._pollScale();
-                this.lastData = data;
-                this.publishData(data);
-            } catch (error) {
-                console.error('Polling failed:', error.message);
-            }
-        });
-    }
+    _parseMtsicsResponse(response) {
+        const parts = response.trim().split(/\s+/);
+        const command = parts[0];
 
-    _stopPolling() {
-        if (this.cronJob) {
-            this.cronJob.stop();
-            this.cronJob = null;
-        }
-    }
-
-    async _pollScale() {
-        const timestamp = Date.now();
-
-        const [sResponse, taResponse, pcsResponse] = await Promise.all([
-            this.client.sendCommand('S').catch(() => null),
-            this.client.sendCommand('TA').catch(() => null),
-            this.client.sendCommand('PCS').catch(() => null),
-        ]);
-
-        const parsedS = this._parseResponse('S', sResponse);
-        const parsedTa = this._parseResponse('TA', taResponse);
-        const parsedPcs = this._parseResponse('PCS', pcsResponse);
-
-        if (parsedPcs.count_quantity !== null) {
-            this.mode = 'COUNTING';
+        // Handle single-word error responses
+        if (parts.length === 1) {
+            if (response === 'ES') throw new Error('MT-SICS: Syntax Error');
+            if (response === 'EL') throw new Error('MT-SICS: Logical Error (invalid command)');
+            // Potentially other single-word responses
+            return { raw: response };
         }
 
-        return {
-            timestamp,
-            mode: this.mode,
-            ...parsedS,
-            ...parsedTa,
-            ...parsedPcs,
-        };
-    }
-
-    _parseResponse(command, response) {
-        if (!response) {
-            return this._getEmptyParsedData(command);
-        }
-
-        const parts = response.split(/\s+/);
         const status = parts[1];
 
-        switch (command) {
-            case 'S':
-            case 'SI':
+        // Handle command acknowledgements (e.g., "Z A")
+        if (status.endsWith('A')) {
+            return { success: true, command, status, raw: response };
+        }
+        
+        // Handle command not executable
+        if (status.endsWith('I')) {
+            throw new Error(`MT-SICS: Command "${command}" not executable.`);
+        }
+
+        // Handle weight responses (e.g., "S S 12.34 g")
+        // According to docs, value is fixed width, but let's try parsing anyway
+        if (parts.length >= 3) {
+            const value = parseFloat(parts[2]);
+            const unit = parts.slice(3).join(' ');
+            
+            if (!isNaN(value)) {
                 return {
-                    weight_value: parseFloat(parts[2]) || 0,
-                    weight_unit: parts[3] || null,
-                    weight_status: status === 'S' ? 'OK' : 'KO',
-                };
-            case 'TA':
-                if (parts.length >= 4) {
-                    return {
-                        tare_value: parseFloat(parts[2]) || 0,
-                        tare_unit: parts[3] || null,
-                        tare_status: 'OK',
-                    };
-                }
-                return {
-                    tare_value: 0,
-                    tare_unit: null,
-                    tare_status: 'OK',
-                };
-            case 'PCS':
-                return {
-                    count_quantity: parseInt(parts[2], 10) || 0,
-                    count_status: status === 'S' ? 'OK' : 'KO',
-                };
-            case '@':
-            case 'TAC':
-            case 'T':
-            case 'Z':
-            case 'REF':
-                 return {
-                    command: command,
-                    status: status === 'A' ? 'OK' : 'KO',
+                    command,
+                    status: status === 'S' ? 'stable' : 'unstable',
+                    value,
+                    unit,
                     raw: response,
                 };
-            default:
-                return { raw: response };
+            }
         }
+
+        // Fallback for unknown formats
+        return { raw: response };
     }
 
-    _getEmptyParsedData(command) {
-        switch (command) {
-            case 'S':
-                return { weight_value: null, weight_unit: null, weight_status: 'KO' };
-            case 'TA':
-                return { tare_value: null, tare_unit: null, tare_status: 'KO' };
-            case 'PCS':
-                return { count_quantity: null, count_status: 'KO' };
-            default:
-                return {};
+
+    async _createConnection() {
+        try {
+            await this._client.connect(this._host, this._port)
+        } catch (err) {
+            switch (this.getState()) {
+                case 'connecting':
+                    this.connectFailed(err.message)
+                    break
+                case 'reconnecting':
+                    this.reconnectFailed(err.message)
+                    break
+                default:
+                   console.log(`MtsicsConnection:_createConnection error in state ${this.getState()}: ${err.message}`);
+                   this.connectLost(err.message);
+            }
+            return
+        }
+
+        this.connectDone()
+    }
+
+    async _closeConnection() {
+        this._client.end()
+
+        if (this.getState() === 'disconnecting') {
+            this.disconnectDone()
         }
     }
 
     _onClose() {
-        if (this.getState() === 'connected') {
-            this.connectLost();
-        }
-    }
-
-    _normalizeCommand(address) {
-        if (typeof address === 'string') {
-            return address.trim().toUpperCase();
-        }
-
-        if (address && typeof address === 'object') {
-            const value = address.command ;
-            if (typeof value === 'string') {
-                return value.trim().toUpperCase();
-            }
-        }
-
-        throw new Error('Invalid MT-SICS command address');
-    }
-
-    _normalizeArgs(address, data) {
-        if (address && typeof address === 'object' && Array.isArray(address.args)) {
-            return address.args.map(String);
-        }
-
-        if (Array.isArray(data)) {
-            return data.map(String);
-        }
-
-        if (typeof data === 'string') {
-            return data.trim() ? data.trim().split(/\s+/) : [];
-        }
-
-        if (data !== undefined && data !== null) {
-            return [String(data)];
-        }
-
-        return [];
+        if (this.getState() === 'connected') this.connectLost()
     }
 }
-module.exports = MtsicsConnection;
+
+module.exports = MtsicsConnection

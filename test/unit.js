@@ -1,131 +1,118 @@
+require('./mock-cybus-base'); // Setup module aliases
 const chai = require('chai');
 const chaiAsPromised = require("chai-as-promised");
-const MtsicsClient = require('../src/Client.js');
 const MtsicsConnection = require('../src/MtsicsConnection.js');
 const MockScaleServer = require('./mock-scale-server.js');
 
 chai.use(chaiAsPromised);
 const { expect } = chai;
 
-describe('Unit Tests', () => {
-    describe('MtsicsClient', () => {
-        const mockServer = new MockScaleServer();
-        const port = 9001;
-        let client;
+describe('MtsicsConnection Integration Tests', () => {
+    const mockServer = new MockScaleServer();
+    const port = 9002;
+    let connection;
 
-        before(async () => {
-            await mockServer.start(port);
-        });
+    const params = {
+        connection: {
+            host: 'localhost',
+            port: port,
+        }
+    };
 
-        after(async () => {
-            await mockServer.stop();
-        });
+    before(async () => {
+        await mockServer.start(port);
+    });
 
-        beforeEach(() => {
-            client = new MtsicsClient({ host: 'localhost', port });
-            mockServer.clearResponses();
-        });
+    after(async () => {
+        await mockServer.stop();
+    });
 
-        afterEach(() => {
-            if (client) {
-                client.end();
-            }
-        });
+    beforeEach(() => {
+        connection = new MtsicsConnection(params);
+        mockServer.clearResponses();
+    });
 
-        it('should connect to the mock server', async () => {
-            await client.connect();
-        });
+    afterEach(async () => {
+        if (connection && connection.getState() !== 'disconnected') {
+            await connection.handleDisconnect();
+        }
+    });
 
-        it('should send a command and receive a response', async () => {
-            await client.connect();
-            mockServer.setResponse('S', 'S S 100.0 g');
-            const response = await client.sendCommand('S');
-            expect(response).to.equal('S S 100.0 g');
-        });
+    it('should connect to the mock server', async () => {
+        await connection.handleConnect();
+        expect(connection.getState()).to.equal('connected');
+    });
 
-        it('should queue commands and execute them sequentially', async () => {
-            await client.connect();
-            mockServer.setResponse('S', 'S S 100.0 g');
-            mockServer.setResponse('T', 'T A');
-
-            const promiseS = client.sendCommand('S');
-            const promiseT = client.sendCommand('T');
-
-            const [responseS, responseT] = await Promise.all([promiseS, promiseT]);
-
-            expect(responseS).to.equal('S S 100.0 g');
-            expect(responseT).to.equal('T A');
+    it('should handle read command for stable weight', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('S', 'S S      123.45 g');
+        const result = await connection.handleRead({ command: 'S' });
+        expect(result).to.deep.equal({
+            command: 'S',
+            status: 'stable',
+            value: 123.45,
+            unit: 'g',
+            raw: 'S S      123.45 g',
         });
     });
 
-    describe('MtsicsConnection', () => {
-        const connection = new MtsicsConnection({ connection: {} });
-
-        it('should parse stable weight response correctly', () => {
-            const response = 'S S 123.45 g';
-            const parsed = connection._parseResponse('S', response);
-            expect(parsed).to.deep.equal({
-                weight_value: 123.45,
-                weight_unit: 'g',
-                weight_status: 'OK',
-            });
+    it('should handle read command for unstable weight', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('SI', 'S D      -10.2 kg');
+        const result = await connection.handleRead({ command: 'SI' });
+        expect(result).to.deep.equal({
+            command: 'S',
+            status: 'unstable',
+            value: -10.2,
+            unit: 'kg',
+            raw: 'S D      -10.2 kg',
         });
+    });
 
-        it('should parse unstable weight response correctly', () => {
-            const response = 'S D 123.45 g';
-            const parsed = connection._parseResponse('S', response);
-            expect(parsed).to.deep.equal({
-                weight_value: 123.45,
-                weight_unit: 'g',
-                weight_status: 'KO',
-            });
+    it('should handle write command with success response', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('Z', 'Z A');
+        const result = await connection.handleWrite({ command: 'Z' });
+        expect(result).to.deep.equal({
+            success: true,
+            command: 'Z',
+            status: 'A',
+            raw: 'Z A',
         });
+    });
 
-        it('should parse tare response correctly', () => {
-            const response = 'TA A 12.3 g';
-            const parsed = connection._parseResponse('TA', response);
-            expect(parsed).to.deep.equal({
-                tare_value: 12.3,
-                tare_unit: 'g',
-                tare_status: 'OK',
-            });
-        });
-        
-        it('should parse empty tare response correctly', () => {
-            const response = 'TA A';
-            const parsed = connection._parseResponse('TA', response);
-            expect(parsed).to.deep.equal({
-                tare_value: 0,
-                tare_unit: null,
-                tare_status: 'OK',
-            });
-        });
+    it('should handle syntax error from scale', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('INVALID', 'ES');
+        await expect(connection.handleRead({ command: 'INVALID' }))
+            .to.be.rejectedWith('MT-SICS: Syntax Error');
+    });
+    
+    it('should handle logical error from scale', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('C', 'EL');
+        await expect(connection.handleRead({ command: 'C' }))
+            .to.be.rejectedWith('MT-SICS: Logical Error (invalid command)');
+    });
 
-        it('should parse piece count response correctly', () => {
-            const response = 'PCS S 10';
-            const parsed = connection._parseResponse('PCS', response);
-            expect(parsed).to.deep.equal({
-                count_quantity: 10,
-                count_status: 'OK',
-            });
-        });
+    it('should handle "command not executable" error from scale', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('S', 'S I'); // "I" for not executable
+        await expect(connection.handleRead({ command: 'S' }))
+            .to.be.rejectedWith('MT-SICS: Command "S" not executable.');
+    });
 
-        it('should parse write command response correctly', () => {
-            const response = 'T A';
-            const parsed = connection._parseResponse('T', response);
-            expect(parsed).to.deep.equal({
-                command: 'T',
-                status: 'OK',
-                raw: 'T A',
+    it('should handle connection loss', (done) => {
+        connection.handleConnect().then(() => {
+            connection.on('connectionLost', () => {
+                expect(connection.getState()).to.equal('connectionLost');
+                done();
             });
-        });
 
-        it('should return empty data for null response', () => {
-            const parsed = connection._parseResponse('S', null);
-            expect(parsed).to.deep.equal({
-                weight_value: null,
-                weight_unit: null,
-                weight_status: 'KO',
+            // Stop the server to trigger a connection loss
+            mockServer.stop().then(() => {
+                 // restart for other tests
+                 mockServer.start(port);
             });
         });
     });
