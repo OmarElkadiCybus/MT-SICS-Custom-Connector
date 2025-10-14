@@ -145,6 +145,18 @@ class MtsicsConnection extends Connection {
             return { raw: response };
         }
 
+        // Handle '@' command response (e.g., "I4 A <SerialNumber>")
+        if (command === 'I4' && status === 'A' && parts.length >= 3) {
+            const serialNumber = parts.slice(2).join(' ');
+            return {
+                success: true,
+                command: '@',
+                status: 'OK',
+                serialNumber,
+                raw: response,
+            };
+        }
+
         // Handle weight responses (e.g., "S S 123.45 g" or "S D 12.34 g")
         if (command === 'S' || command === 'SI') {
             try {
@@ -196,6 +208,21 @@ class MtsicsConnection extends Connection {
                 command: 'PCS',
                 status: 'OK',
                 value,
+                raw: response,
+            };
+        }
+
+        // Handle Display responses (e.g., "D A Hello World")
+        if (command === 'D') {
+            // If it's an acknowledgement (e.g., "D A"), treat it as a success
+            if (status.endsWith('A')) {
+                return { success: true, command, status: 'OK', raw: response };
+            }
+            const text = parts.slice(2).join(' '); // Text starts from parts[2]
+            return {
+                command: 'D',
+                status: 'OK',
+                value: text,
                 raw: response,
             };
         }
@@ -261,3 +288,4 @@ class MtsicsConnection extends Connection {
 }
 
 module.exports = MtsicsConnection
+

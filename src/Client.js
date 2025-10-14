@@ -41,15 +41,15 @@ class Client extends EventEmitter {
     const command = String(address || '').toUpperCase()
     let commandToSend = command
 
-    // Some write commands might include data.
-    // The MT-SICS documentation specifies how parameters are passed.
-    // For example, TA <value> or D "text".
-    // We will assume for now that data is either a single value or quoted string.
+    // Format data based on its type for MT-SICS commands.
     if (data !== undefined && data !== null) {
-      if (typeof data === 'string' && data.includes(' ')) {
-        commandToSend = `${command} "${data}"`
+      if (typeof data === 'string') {
+        commandToSend = `${command} "${data}"` // Always quote string data
+      } else if (typeof data === 'number') {
+        commandToSend = `${command} ${data}` // Do not quote numeric data
       } else {
-        commandToSend = `${command} ${data}`
+        // Fallback for other types, or if data is an object that needs serialization
+        commandToSend = `${command} ${String(data)}`
       }
     }
     return this._sendCommand(commandToSend)
@@ -73,7 +73,8 @@ class Client extends EventEmitter {
     this.responseCallback = (err, response) => {
       if (err) {
         reject(err)
-      } else {
+      }
+      else {
         resolve(response)
       }
       this.isProcessing = false
