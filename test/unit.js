@@ -7,7 +7,7 @@ const MockScaleServer = require('./mock-scale-server.js');
 chai.use(chaiAsPromised);
 const { expect } = chai;
 
-describe('MtsicsConnection Integration Tests', () => {
+describe('MtsicsConnection Unit Tests', () => {
     const mockServer = new MockScaleServer();
     const port = 9002;
     let client;
@@ -74,6 +74,32 @@ describe('MtsicsConnection Integration Tests', () => {
         });
     });
 
+    it("should handle 'I4' response for '@' command with serial number", async () => {
+        await client.handleConnect();
+        mockServer.setResponse('@', 'I4 A "123456789"');
+        const response = await client.handleWrite({ command: '@' });
+        expect(response).to.deep.equal({
+            success: true,
+            command: '@',
+            status: 'OK',
+            serialNumber: '123456789',
+            raw: 'I4 A "123456789"',
+        });
+    });
+
+    it("should handle 'IA' response for '@' command with serial number", async () => {
+        await client.handleConnect();
+        mockServer.setResponse('@', 'IA A "987654321"');
+        const response = await client.handleWrite({ command: '@' });
+        expect(response).to.deep.equal({
+            success: true,
+            command: '@',
+            status: 'OK',
+            serialNumber: '987654321',
+            raw: 'IA A "987654321"',
+        });
+    });
+
     it('should handle syntax error from scale', async () => {
         await client.handleConnect();
         mockServer.setResponse('INVALID', 'ES');
@@ -93,6 +119,76 @@ describe('MtsicsConnection Integration Tests', () => {
         mockServer.setResponse('S', 'S I'); // "I" for not executable
         await expect(client.handleRead({ command: 'S' }))
             .to.be.rejectedWith('MT-SICS: Command "S" not executable.');
+    });
+
+    it('should handle overload error from scale', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('S', 'S +');
+        await expect(client.handleRead({ command: 'S' }))
+            .to.be.rejectedWith('MT-SICS: Overload on command "S"');
+    });
+
+    it('should handle underload error from scale', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('S', 'S -');
+        await expect(client.handleRead({ command: 'S' }))
+            .to.be.rejectedWith('MT-SICS: Underload on command "S"');
+    });
+
+    it('should handle read command for Taring', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('T', 'T S      100.00 g');
+        const response = await client.handleRead({ command: 'T' });
+        expect(response).to.deep.equal({
+            command: 'T',
+            status: 'stable',
+            value: 100.00,
+            unit: 'g',
+            raw: 'T S      100.00 g',
+        });
+    });
+
+    it('should handle ZI command response', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('ZI', 'ZI D');
+        const response = await client.handleRead({ command: 'ZI' });
+        expect(response).to.deep.equal({
+            command: 'ZI',
+            status: 'dynamic',
+            raw: 'ZI D',
+        });
+    });
+
+    it('should handle PW command response', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('PW', 'PW A      0.50 g');
+        const response = await client.handleRead({ command: 'PW' });
+        expect(response).to.deep.equal({
+            command: 'PW',
+            status: 'OK',
+            value: 0.50,
+            unit: 'g',
+            raw: 'PW A      0.50 g',
+        });
+    });
+
+    it('should handle PCS command response', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('PCS', 'PCS S 10');
+        const response = await client.handleRead({ command: 'PCS' });
+        expect(response).to.deep.equal({
+            command: 'PCS',
+            status: 'stable',
+            value: 10,
+            raw: 'PCS S 10',
+        });
+    });
+
+    it('should handle logical error for D command', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('D "some text"', 'D L');
+        await expect(client.handleWrite({ command: 'D' }, 'some text'))
+            .to.be.rejectedWith('MT-SICS: Logical Error (invalid parameter for D)');
     });
 
     it('should handle connection loss', (done) => {

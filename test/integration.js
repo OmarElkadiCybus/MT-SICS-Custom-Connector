@@ -24,31 +24,27 @@ describe('Integration Tests', () => {
             connection: {
                 host: 'localhost',
                 port,
-                // pollingInterval: '*/1 * * * * *' // REMOVED
             },
-            log: console // NEW: Pass console as logger for tests
+            log: console
         };
         connection = new MtsicsConnection(params);
         mockServer.clearResponses();
     });
 
-    afterEach(async () => { // Changed to async
+    afterEach(async () => {
         if (connection) {
-            // Disconnect all subscriptions
             for (const [command] of connection._subscriptions.entries()) {
                 await connection.handleUnsubscribe({ command });
             }
-            await connection.handleDisconnect(); // Ensure full disconnect
+            await connection.handleDisconnect();
         }
     });
 
-    it('should connect, subscribe, poll data, and publish it', (done) => { // Test name changed
+    it('should connect, subscribe, poll data, and publish it', (done) => {
         mockServer.setResponse('S', 'S S 100.0 g');
-        // mockServer.setResponse('TA', 'TA A 10.0 g'); // Not needed for 'S' command subscription
-        // mockServer.setResponse('PCS', 'PCS S 5'); // Not needed for 'S' command subscription
 
-        connection.handleConnect().then(async () => { // Connect first
-            await connection.handleSubscribe({ command: 'S', interval: 1000 }, (data) => { // Subscribe to 'S'
+        connection.handleConnect().then(async () => {
+            await connection.handleSubscribe({ command: 'S', interval: 1000 }, (data) => {
                 try {
                     expect(data.command).to.equal('S');
                     expect(data.status).to.equal('stable');
@@ -76,7 +72,7 @@ describe('Integration Tests', () => {
 
     it('should handle read commands', async () => {
         await connection.handleConnect();
-        mockServer.setResponse('SI', 'S D 50.0 g'); // Simulator now returns 'D' for unstable
+        mockServer.setResponse('SI', 'S D 50.0 g');
         const response = await connection.handleRead({ command: 'SI' });
         expect(response).to.deep.equal({
             command: 'S',
@@ -87,14 +83,39 @@ describe('Integration Tests', () => {
         });
     });
     
-    it('should change mode to COUNTING after PCS command via subscription', (done) => { // Test name changed
-        mockServer.setResponse('PCS', 'PCS S 5'); // Only need PCS for mode change
+    it('should handle write command with tare value', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('TA 15.5', 'TA A 15.50 g');
+        const response = await connection.handleWrite({ command: 'TA' }, 15.5);
+        expect(response).to.deep.equal({
+            command: 'TA',
+            status: 'OK',
+            value: 15.5,
+            unit: 'g',
+            raw: 'TA A 15.50 g',
+        });
+    });
+
+    it('should handle write command with display text', async () => {
+        await connection.handleConnect();
+        mockServer.setResponse('D "Hello World"', 'D A');
+        const response = await connection.handleWrite({ command: 'D' }, "Hello World");
+        expect(response).to.deep.equal({
+            success: true,
+            command: 'D',
+            status: 'OK',
+            raw: 'D A',
+        });
+    });
+
+    it('should change mode to COUNTING after PCS command via subscription', (done) => {
+        mockServer.setResponse('PCS', 'PCS S 5');
         
         connection.handleConnect().then(async () => {
             await connection.handleSubscribe({ command: 'PCS', interval: 1000 }, (data) => {
                 try {
                     expect(data.command).to.equal('PCS');
-                    expect(data.status).to.equal('OK');
+                    expect(data.status).to.equal('stable');
                     expect(data.value).to.equal(5);
                     expect(connection.mode).to.equal('COUNTING');
                     done();
@@ -107,7 +128,7 @@ describe('Integration Tests', () => {
     
     it('should reset mode to WEIGHING after @ command', (done) => {
         mockServer.setResponse('PCS', 'PCS S 5');
-        mockServer.setResponse('@', '@ A');
+        mockServer.setResponse('@', 'IA A "dummy-serial"');
 
         connection.handleConnect().then(async () => {
             // First, set mode to COUNTING via subscription
