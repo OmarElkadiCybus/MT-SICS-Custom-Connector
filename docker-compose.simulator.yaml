@@ -1,0 +1,22 @@
+services:
+  scale-simulator:
+    image: python:3.11-slim
+    network_mode: host
+    working_dir: /app
+    command:
+      - python3
+      - simulators/mtsim_headless_server.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "4305"
+      - --http-port
+      - "8081"
+    volumes:
+      - ./simulators:/app/simulators:ro
+    ports:
+      - "4305:4305"
+      - "8081:8081"
+    environment:
+      PYTHONUNBUFFERED: "1"
+    restart: unless-stopped
