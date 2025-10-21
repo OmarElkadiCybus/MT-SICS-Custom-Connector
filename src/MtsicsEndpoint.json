@@ -1,0 +1,60 @@
+{
+  "$id": "MtsicsEndpoint",
+  "definitions": {
+    "command": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "$id": "/properties/command",
+          "title": "command",
+          "type": "string",
+          "description": "The command to be sent to the scale",
+          "enum": [
+            "S",
+            "SI",
+            "TA",
+            "PCS",
+            "PW",
+            "REF",
+            "@",
+            "TAC",
+            "T",
+            "Z",
+            "D"
+          ]
+        },
+        "mode": {
+          "$id": "/properties/mode",
+          "title": "Mode",
+          "type": "string",
+          "description": "Optional: Set the operational mode for this command",
+          "enum": ["WEIGHING", "COUNTING"]
+        },
+        "readTimeout": {
+          "type": "integer",
+          "title": "Read Timeout (ms)",
+          "description": "Optional: Timeout for reading the response in milliseconds",
+          "default": 5000
+        }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "subscribe": {
+      "type": "object",
+      "properties": {
+        "command": { "$ref": "#/definitions/command/properties/command" },
+        "interval": {
+          "type": "integer",
+          "title": "Polling Interval (ms)",
+          "description": "Polling interval in milliseconds",
+          "default": 1000
+        },
+        "mode": { "$ref": "#/definitions/command/properties/mode" }
+      },
+      "required": ["command", "interval"]
+    },
+    "write": { "$ref": "#/definitions/command" },
+    "read": { "$ref": "#/definitions/command" }
+  }
+}

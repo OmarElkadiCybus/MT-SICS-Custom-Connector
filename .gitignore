@@ -2,4 +2,7 @@
 .vscode
 node_modules
 *.log
-
+ideal
+.env
+docker-compose.simulator.yaml
+Example_Custom_Connector

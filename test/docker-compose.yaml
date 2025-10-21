@@ -9,4 +9,4 @@ services:
       sh -c '
         cd /app &&
         npm install && 
-        /app/node_modules/.bin/mocha /app/test/**/*.js --timeout 3000 --colors --exit'
+        /app/node_modules/.bin/mocha --require /app/test/mock-cybus-base.js "/app/test/**/*.js" --recursive --timeout 30000 --colors --exit'

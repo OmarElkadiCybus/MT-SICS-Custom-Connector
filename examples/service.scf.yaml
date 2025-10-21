@@ -1,0 +1,223 @@
+description: MT-SICS Weighing Scale Service
+
+metadata:
+  name: mtsics-weighing-scale-service
+
+parameters:
+  AgentName:
+    type: string
+    description: The protocol-mapper agent name where the MT-SICS connector is running
+    default: MtsicsAgent
+
+  DeviceHost:
+    type: string
+    description: IP address or DNS name of the MT-SICS enabled scale
+    default: localhost
+
+  DevicePort:
+    type: integer
+    description: Listening TCP port of the scale
+    default: 4305
+
+resources:
+  scaleConnection:
+    type: Cybus::Connection
+    properties:
+      protocol: Mtsics
+      agentName: !ref AgentName
+      connection:
+        host: !ref DeviceHost
+        port: !ref DevicePort
+
+  # ========================================
+  # === Read Endpoints (One-off requests) ===
+  # ========================================
+
+  # Read the stable weight once.
+  # To trigger, send any message to this endpoint's /get topic.
+  # Corresponds to MT-SICS command: S
+  readStableWeight:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      read:
+        command: 'S'
+      agentName: !ref AgentName
+
+  # Read the current tare value once.
+  # To trigger, send any message to this endpoint's /get topic.
+  # Corresponds to MT-SICS command: TA
+  readTareValue:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      read:
+        command: 'TA'
+      agentName: !ref AgentName
+
+  # ========================================
+  # === Write Endpoints (Actions)         ===
+  # ========================================
+
+  # Zero the scale
+  # To trigger, send an empty message to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: Z
+  zeroScale:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'Z'
+      agentName: !ref AgentName
+
+  # Tare the scale (using the current weight on the platform)
+  # To trigger, send an empty message to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: T
+  tareScale:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'T'
+      agentName: !ref AgentName
+
+  # Set a preset tare value.
+  # To trigger, send a numeric value (e.g., 10.5) to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: TA <value>
+  setPresetTare:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'TA'
+      agentName: !ref AgentName
+
+  # Clear the current tare value.
+  # To trigger, send an empty message to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: TAC
+  clearTare:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'TAC'
+      agentName: !ref AgentName
+
+  # Write text to the scale's display.
+  # To trigger, send a string (e.g., "Hello World") to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: D "<text>"
+  writeToDisplay:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'D'
+      agentName: !ref AgentName
+
+  # Reset the scale.
+  # To trigger, send an empty message to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: @
+  resetScale:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: '@'
+      agentName: !ref AgentName
+
+  # Set the reference piece weight for piece counting mode.
+  # To trigger, send a numeric value (e.g., 2.5) to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: PW <value>
+  setPieceWeight:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'PW'
+      agentName: !ref AgentName
+
+  # Build a reference for piece counting from a number of pieces on the scale.
+  # To trigger, send an integer (e.g., 10) to this endpoint's /set topic.
+  # Corresponds to MT-SICS command: REF <value>
+  buildPieceReference:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      write:
+        command: 'REF'
+      agentName: !ref AgentName
+
+  # =================================================
+  # === Subscription Endpoints (Continuous data) ===
+  # =================================================
+
+  # Subscribe to stable weight, polling every 2 seconds
+  subscribeStableWeight:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      subscribe:
+        command: 'S'
+        interval: 2000
+      agentName: !ref AgentName
+
+  # Subscribe to immediate weight on-demand, polling every 2 seconds
+  subscribeImmediateWeight:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      subscribe:
+        command: 'SI'
+        interval: 2000
+      agentName: !ref AgentName
+
+  # Subscribe to the current piece count, polling every 5 seconds
+  subscribePieceCount:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      subscribe:
+        command: 'PCS'
+        interval: 5000
+      agentName: !ref AgentName
+
+  # Subscribe to the current tare value, polling every 5 seconds
+  subscribeTareValue:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      subscribe:
+        command: 'TA'
+        interval: 5000
+      agentName: !ref AgentName
+
+  # ========================================
+  # === Endpoints with Explicit Mode      ===
+  # ========================================
+
+  # Subscribe to piece count, explicitly setting the connector mode to COUNTING.
+  # This can be useful to ensure the connector is in the correct state.
+  subscribePieceCountExplicit:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      subscribe:
+        command: 'PCS'
+        mode: 'COUNTING'
+        interval: 2000
+      agentName: !ref AgentName
