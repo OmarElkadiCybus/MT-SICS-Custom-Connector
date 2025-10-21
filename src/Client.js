@@ -4,8 +4,9 @@ const net = require('net')
 const RESPONSE_TIMEOUT_MS = 2000
 
 class Client extends EventEmitter {
-  constructor() {
+  constructor(params = {}) {
     super()
+    this._log = params.log || console;
     this.conn = new net.Socket()
     this.conn.on('close', (hadError) => this.emit('close', hadError))
     this.conn.on('error', (err) => this.emit('error', err))
@@ -39,19 +40,21 @@ class Client extends EventEmitter {
   write(address, data) {
     // MT-SICS commands are uppercase.
     const command = String(address || '').toUpperCase()
-    let commandToSend = command
+    let commandToSend = command;
 
-    // Format data based on its type for MT-SICS commands.
-    if (data !== undefined && data !== null) {
-      if (typeof data === 'string') {
-        commandToSend = `${command} "${data}"` // Always quote string data
-      } else if (typeof data === 'number') {
-        commandToSend = `${command} ${data}` // Do not quote numeric data
-      } else {
-        // Fallback for other types, or if data is an object that needs serialization
-        commandToSend = `${command} ${String(data)}`
-      }
+    // Explicitly handle parameter-less commands to avoid any ambiguity with the data parameter
+    if (command === 'T' || command === 'TAC' || command === 'Z' || command === '@') {
+        // These commands take no parameters, so we ignore the data variable.
+        commandToSend = command;
+    } else if (command === 'D') {
+        // The D command takes a quoted string parameter.
+        commandToSend = `${command} "${data}"`;
+    } else if (data !== undefined && data !== null && String(data).length > 0) {
+        // All other commands (like TA with a value) get the data appended.
+        commandToSend = `${command} ${String(data)}`;
     }
+
+    this._log.debug(`[Client.js] Sending command: ${commandToSend}`);
     return this._sendCommand(commandToSend)
   }
 
@@ -63,6 +66,7 @@ class Client extends EventEmitter {
   }
 
   _processQueue() {
+    this._log.debug(`[Client.js] _processQueue called. isProcessing: ${this.isProcessing}, queue length: ${this.commandQueue.length}`);
     if (this.isProcessing || this.commandQueue.length === 0) {
       return
     }
@@ -89,6 +93,7 @@ class Client extends EventEmitter {
       }
     }, RESPONSE_TIMEOUT_MS)
 
+    this._log.debug(`[Client.js] Writing to socket: ${command}\r\n`);
     this.conn.write(`${command}\r\n`)
   }
 
@@ -100,9 +105,11 @@ class Client extends EventEmitter {
       this.buffer = this.buffer.substring(newlineIndex + 2)
 
       if (this.responseCallback) {
+        const callback = this.responseCallback;
+        this.responseCallback = null; // Prevent the same callback from being used for the next item in the buffer
+
         clearTimeout(this.responseTimeout)
-        this.responseCallback(null, response)
-        this.responseCallback = null
+        callback(null, response)
       } else {
         // Handle unsolicited data if necessary
         this.emit('unsolicited-data', response)

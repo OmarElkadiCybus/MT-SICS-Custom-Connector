@@ -5,6 +5,7 @@ services:
     volumes:
       - agentData:/data
     environment:
+      LOG_LEVEL: info
       CYBUS_MQTT_HOST: localhost
       CYBUS_MQTT_PORT: 1883
       CYBUS_AGENT_MODE: distributed
