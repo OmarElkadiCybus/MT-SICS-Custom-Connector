@@ -1,8 +1,10 @@
 {
   "$id": "MtsicsEndpoint",
   "definitions": {
-    "command": {
+    "address": {
       "type": "object",
+      "required": ["command"],
+      "additionalProperties": true,
       "properties": {
         "command": {
           "$id": "/properties/command",
@@ -36,25 +38,7 @@
           "description": "Optional: Timeout for reading the response in milliseconds",
           "default": 5000
         }
+      }
     }
-  },
-  "type": "object",
-  "properties": {
-    "subscribe": {
-      "type": "object",
-      "properties": {
-        "command": { "$ref": "#/definitions/command/properties/command" },
-        "interval": {
-          "type": "integer",
-          "title": "Polling Interval (ms)",
-          "description": "Polling interval in milliseconds",
-          "default": 1000
-        },
-        "mode": { "$ref": "#/definitions/command/properties/mode" }
-      },
-      "required": ["command", "interval"]
-    },
-    "write": { "$ref": "#/definitions/command" },
-    "read": { "$ref": "#/definitions/command" }
   }
 }
