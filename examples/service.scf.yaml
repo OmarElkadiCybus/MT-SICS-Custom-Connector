@@ -43,7 +43,6 @@ resources:
       connection: !ref scaleConnection
       read:
         command: 'S'
-      agentName: !ref AgentName
 
   # Read the current tare value once.
   # To trigger, send any message to this endpoint's /get topic.
@@ -55,7 +54,6 @@ resources:
       connection: !ref scaleConnection
       read:
         command: 'TA'
-      agentName: !ref AgentName
 
   # ========================================
   # === Write Endpoints (Actions)         ===
@@ -71,7 +69,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'Z'
-      agentName: !ref AgentName
 
   # Tare the scale (using the current weight on the platform)
   # To trigger, send an empty message to this endpoint's /set topic.
@@ -83,7 +80,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'T'
-      agentName: !ref AgentName
 
   # Set a preset tare value.
   # To trigger, send a numeric value (e.g., 10.5) to this endpoint's /set topic.
@@ -95,7 +91,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'TA'
-      agentName: !ref AgentName
 
   # Clear the current tare value.
   # To trigger, send an empty message to this endpoint's /set topic.
@@ -107,7 +102,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'TAC'
-      agentName: !ref AgentName
 
   # Write text to the scale's display.
   # To trigger, send a string (e.g., "Hello World") to this endpoint's /set topic.
@@ -119,7 +113,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'D'
-      agentName: !ref AgentName
 
   # Reset the scale.
   # To trigger, send an empty message to this endpoint's /set topic.
@@ -131,7 +124,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: '@'
-      agentName: !ref AgentName
 
   # Set the reference piece weight for piece counting mode.
   # To trigger, send a numeric value (e.g., 2.5) to this endpoint's /set topic.
@@ -143,7 +135,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'PW'
-      agentName: !ref AgentName
 
   # Build a reference for piece counting from a number of pieces on the scale.
   # To trigger, send an integer (e.g., 10) to this endpoint's /set topic.
@@ -155,7 +146,6 @@ resources:
       connection: !ref scaleConnection
       write:
         command: 'REF'
-      agentName: !ref AgentName
 
   # =================================================
   # === Subscription Endpoints (Continuous data) ===
@@ -170,7 +160,6 @@ resources:
       subscribe:
         command: 'S'
         interval: 2000
-      agentName: !ref AgentName
 
   # Subscribe to immediate weight on-demand, polling every 2 seconds
   subscribeImmediateWeight:
@@ -181,7 +170,6 @@ resources:
       subscribe:
         command: 'SI'
         interval: 2000
-      agentName: !ref AgentName
 
   # Subscribe to the current piece count, polling every 5 seconds
   subscribePieceCount:
@@ -192,7 +180,6 @@ resources:
       subscribe:
         command: 'PCS'
         interval: 5000
-      agentName: !ref AgentName
 
   # Subscribe to the current tare value, polling every 5 seconds
   subscribeTareValue:
@@ -203,7 +190,6 @@ resources:
       subscribe:
         command: 'TA'
         interval: 5000
-      agentName: !ref AgentName
 
   # ========================================
   # === Endpoints with Explicit Mode      ===
@@ -220,4 +206,3 @@ resources:
         command: 'PCS'
         mode: 'COUNTING'
         interval: 2000
-      agentName: !ref AgentName
