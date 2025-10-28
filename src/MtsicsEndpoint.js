@@ -1,7 +1,4 @@
-'use strict'
-const isUsingCybusBaseImage = process.env.CYBUS_IMAGE_BASE
-const modulePathPrefix = isUsingCybusBaseImage ? '' : '../../cybus/protocol-mapper/src/'
-const Endpoint = require(modulePathPrefix + 'Endpoint')
+const Endpoint = require('Endpoint')
 const schema = require('./MtsicsEndpoint.json')
 
 class MtsicsEndpoint extends Endpoint {
