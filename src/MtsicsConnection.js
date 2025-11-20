@@ -1,7 +1,7 @@
 const Connection = require('Connection')
 const Client = require('./Client.js')
 const schema = require('./MtsicsConnection.json');
-// const cron = require('node-cron'); // REMOVED
+const { validate } = require('./CommandValidator.js');
 
 class MtsicsConnection extends Connection {
     constructor(params) {
@@ -26,7 +26,6 @@ class MtsicsConnection extends Connection {
             .on('close', this._onClose.bind(this))
         
         this.mode = 'WEIGHING'; // Default mode
-        this._subscriptions = new Map(); // NEW: To store active subscriptions
     }
 
     // Protocol implementation interface method
@@ -37,7 +36,6 @@ class MtsicsConnection extends Connection {
     // Protocol implementation interface method
     async handleConnect() {
         await this._createConnection();
-        // Polling logic moved to handleSubscribe
     }
 
     // Protocol implementation interface method
@@ -48,15 +46,6 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method
     async handleDisconnect() {
-        // Polling logic moved to handleSubscribe
-        // Stop all active polling jobs
-        for (const [key, { job }] of this._subscriptions.entries()) {
-            if (job) {
-                clearInterval(job); // Changed from job.stop()
-                this._log.info(`Polling job for ${key} stopped.`);
-            }
-        }
-        this._subscriptions.clear(); // Clear subscriptions
         await this._closeConnection()
     }
 
@@ -65,7 +54,12 @@ class MtsicsConnection extends Connection {
         if (address.mode) {
             this.mode = address.mode;
         }
-        const rawResponse = await this._client.read(address.command)
+
+        if (!validate(address.command)) {
+            throw new Error(`Invalid command: ${address.command}`);
+        }
+
+        const rawResponse = await this._client.read(address.command, address.timeout)
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
         this._updateMode(address.command);
          
