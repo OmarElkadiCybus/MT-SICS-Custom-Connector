@@ -1,8 +1,6 @@
 const { EventEmitter } = require('events')
 const net = require('net')
 
-const RESPONSE_TIMEOUT_MS = 2000
-
 class Client extends EventEmitter {
   constructor(params = {}) {
     super()
@@ -33,11 +31,11 @@ class Client extends EventEmitter {
     this.conn.destroy()
   }
 
-  read(address) {
-    return this._sendCommand(address)
+  read(address, timeout = 2000) {
+    return this._sendCommand(address, timeout)
   }
 
-  write(address, data) {
+  write(address, data, timeout = 2000) {
     // MT-SICS commands are uppercase.
     const command = String(address || '').toUpperCase()
     let commandToSend = command;
@@ -55,12 +53,12 @@ class Client extends EventEmitter {
     }
 
     this._log.debug(`[Client.js] Sending command: ${commandToSend}`);
-    return this._sendCommand(commandToSend)
+    return this._sendCommand(commandToSend, timeout)
   }
 
-  _sendCommand(command) {
+  _sendCommand(command, timeout) {
     return new Promise((resolve, reject) => {
-      this.commandQueue.push({ command, resolve, reject })
+      this.commandQueue.push({ command, resolve, reject, timeout })
       this._processQueue()
     })
   }
@@ -72,7 +70,7 @@ class Client extends EventEmitter {
     }
 
     this.isProcessing = true
-    const { command, resolve, reject } = this.commandQueue.shift()
+    const { command, resolve, reject, timeout } = this.commandQueue.shift()
 
     this.responseCallback = (err, response) => {
       if (err) {
@@ -91,7 +89,7 @@ class Client extends EventEmitter {
         this.responseCallback(err)
         this.responseCallback = null
       }
-    }, RESPONSE_TIMEOUT_MS)
+    }, timeout)
 
     this._log.debug(`[Client.js] Writing to socket: ${command}\r\n`);
     this.conn.write(`${command}\r\n`)

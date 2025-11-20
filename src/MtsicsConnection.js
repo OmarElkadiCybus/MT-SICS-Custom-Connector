@@ -67,7 +67,6 @@ class MtsicsConnection extends Connection {
         }
         const rawResponse = await this._client.read(address.command)
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
-        const readTimeout = address.timeout || 5000; // Default to 5 seconds if not specified
         this._updateMode(address.command);
          
         return parsedResponse;
@@ -79,9 +78,27 @@ class MtsicsConnection extends Connection {
         if (address.mode) {
             this.mode = address.mode;
         }
-        const rawResponse = await this._client.write(address.command, writeData);
+
+        let command = address.command;
+        let data = writeData;
+
+        if (typeof data === 'string') {
+            // Clean up the data string by removing quotes, normalizing spaces, and trimming whitespace
+            data = data.replace(/"/g, '').replace(/\s+/g, ' ').trim();
+
+            // If the user sends the full command string, extract the arguments
+            if (data.toUpperCase().startsWith(command.toUpperCase() + ' ')) {
+                data = data.substring(command.length).trim();
+            }
+        }
+
+        if (!validate(command, data)) {
+            throw new Error(`Invalid command or parameters: ${command} ${data}`);
+        }
+
+        const rawResponse = await this._client.write(command, data, address.timeout);
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
-        this._updateMode(address.command);
+        this._updateMode(command);
         return parsedResponse;
     }
 

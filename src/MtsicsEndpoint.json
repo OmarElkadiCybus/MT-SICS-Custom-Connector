@@ -32,10 +32,10 @@
           "description": "Optional: Set the operational mode for this command",
           "enum": ["WEIGHING", "COUNTING"]
         },
-        "readTimeout": {
+        "timeout": {
           "type": "integer",
-          "title": "Read Timeout (ms)",
-          "description": "Optional: Timeout for reading the response in milliseconds",
+          "title": "Timeout (ms)",
+          "description": "Optional: Timeout for the read/write response in milliseconds",
           "default": 5000
         }
       }
