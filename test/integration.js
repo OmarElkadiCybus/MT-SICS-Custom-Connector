@@ -64,8 +64,8 @@ describe('Integration Tests', () => {
     
     it('should handle write command with tare value', async () => {
         await connection.handleConnect();
-        mockServer.setResponse('TA 15.5', 'TA A 15.50 g');
-        const response = await connection.handleWrite({ command: 'TA' }, 15.5);
+        mockServer.setResponse('TA 15.5 g', 'TA A 15.50 g');
+        const response = await connection.handleWrite({ command: 'TA' }, '15.5 g');
         expect(response).to.deep.equal({
             command: 'TA',
             status: 'OK',

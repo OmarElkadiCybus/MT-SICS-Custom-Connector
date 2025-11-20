@@ -8,10 +8,14 @@ class MockScaleServer extends EventEmitter {
         this.sockets = new Set();
         this.responses = new Map();
         this.defaultResponse = 'ES\r\n'; // Syntax Error
+        this.silent = false;
 
         this.server.on('connection', (socket) => {
             this.sockets.add(socket);
             socket.on('data', (data) => {
+                if (this.silent) {
+                    return;
+                }
                 const command = data.toString().trim();
                 const response = this.responses.get(command) || this.defaultResponse;
                 socket.write(response);
@@ -44,6 +48,10 @@ class MockScaleServer extends EventEmitter {
 
     clearResponses() {
         this.responses.clear();
+    }
+
+    setSilent(silent) {
+        this.silent = silent;
     }
 }
 

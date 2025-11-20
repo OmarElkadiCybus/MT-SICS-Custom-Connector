@@ -21,7 +21,8 @@ describe('MtsicsConnection Unit Tests', () => {
     });
 
     beforeEach(() => {
-        client = new MtsicsConnection({ connection: { host: 'localhost', port } });
+        const log = { info: ()=>{}, warn: ()=>{}, error: ()=>{}, debug: ()=>{} };
+        client = new MtsicsConnection({ connection: { host: 'localhost', port }, log });
         mockServer.clearResponses();
     });
 
@@ -29,6 +30,7 @@ describe('MtsicsConnection Unit Tests', () => {
         if (client) {
             await client.handleDisconnect();
         }
+        mockServer.setSilent(false);
     });
 
     it('should connect to the mock server', async () => {
@@ -74,6 +76,50 @@ describe('MtsicsConnection Unit Tests', () => {
         });
     });
 
+    it('should handle write command with JSON object', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('TA 123.45 g', 'TA A 123.45 g');
+        const response = await client.handleWrite({ command: 'TA' }, { value: '123.45 g' });
+        expect(response).to.deep.equal({
+            command: 'TA',
+            status: 'OK',
+            value: 123.45,
+            unit: 'g',
+            raw: 'TA A 123.45 g',
+        });
+    });
+
+    it('should handle write command with JSON object containing a string', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('D "Hello"', 'D A');
+        const response = await client.handleWrite({ command: 'D' }, { value: 'Hello' });
+        expect(response).to.deep.equal({
+            success: true,
+            command: 'D',
+            status: 'OK',
+            raw: 'D A',
+        });
+    });
+
+    it('should throw error for invalid JSON object in writeData', async () => {
+        await client.handleConnect();
+        await expect(client.handleWrite({ command: 'TA' }, { foo: 'bar' }))
+            .to.be.rejectedWith("Invalid writeData object. It must only contain a 'value' property.");
+    });
+
+    it('should handle unclean string in writeData', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('TA 123.45 g', 'TA A 123.45 g');
+        const response = await client.handleWrite({ command: 'TA' }, '  "TA   123.45   g"  ');
+        expect(response).to.deep.equal({
+            command: 'TA',
+            status: 'OK',
+            value: 123.45,
+            unit: 'g',
+            raw: 'TA A 123.45 g',
+        });
+    });
+
     it("should handle 'I4' response for '@' command with serial number", async () => {
         await client.handleConnect();
         mockServer.setResponse('@', 'I4 A "123456789"');
@@ -102,15 +148,15 @@ describe('MtsicsConnection Unit Tests', () => {
 
     it('should handle syntax error from scale', async () => {
         await client.handleConnect();
-        mockServer.setResponse('INVALID', 'ES');
-        await expect(client.handleRead({ command: 'INVALID' }))
+        mockServer.setResponse('S', 'ES');
+        await expect(client.handleRead({ command: 'S' }))
             .to.be.rejectedWith('MT-SICS: Syntax Error');
     });
     
     it('should handle logical error from scale', async () => {
         await client.handleConnect();
-        mockServer.setResponse('C', 'EL');
-        await expect(client.handleRead({ command: 'C' }))
+        mockServer.setResponse('S', 'EL');
+        await expect(client.handleRead({ command: 'S' }))
             .to.be.rejectedWith('MT-SICS: Logical Error (invalid command)');
     });
 
@@ -190,6 +236,18 @@ describe('MtsicsConnection Unit Tests', () => {
         await expect(client.handleWrite({ command: 'D' }, 'some text'))
             .to.be.rejectedWith('MT-SICS: Logical Error (invalid parameter for D)');
     });
+
+    it('should handle command timeout and trigger connection lost', async () => {
+        await client.handleConnect();
+        mockServer.setSilent(true);
+        
+        await expect(client.handleRead({ command: 'S', timeout: 100 })).to.be.rejectedWith('Command "S" timed out');
+
+        // Give some time for the close event to propagate
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        expect(client.getState()).to.equal('connectionLost');
+    }).timeout(500);
 
     it('should handle connection loss', (done) => {
         client.handleConnect().then(() => {

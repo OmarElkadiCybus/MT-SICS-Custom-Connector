@@ -97,9 +97,11 @@ class Client extends EventEmitter {
 
     this.responseTimeout = setTimeout(() => {
       if (this.responseCallback) {
-        const err = new Error(`Command "${command}" timed out`)
-        this.responseCallback(err)
-        this.responseCallback = null
+        const err = new Error(`Command "${command}" timed out`);
+        this.conn.destroy(); // Just destroy, don't pass error
+        this.emit('error', err); // Emit error manually
+        this.responseCallback(err);
+        this.responseCallback = null;
       }
     }, timeout)
 
