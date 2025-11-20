@@ -1,5 +1,6 @@
 const { EventEmitter } = require('events')
 const net = require('net')
+const { validateWriteCommand } = require('./CommandValidator.js');
 
 class Client extends EventEmitter {
   constructor(params = {}) {
@@ -36,20 +37,31 @@ class Client extends EventEmitter {
   }
 
   write(address, data, timeout = 2000) {
-    // MT-SICS commands are uppercase.
-    const command = String(address || '').toUpperCase()
-    let commandToSend = command;
+    const command = String(address || '').toUpperCase();
+    
+    let processedData = '';
+    if (data !== undefined && data !== null) {
+        processedData = String(data);
+    }
 
-    // Explicitly handle parameter-less commands to avoid any ambiguity with the data parameter
-    if (command === 'T' || command === 'TAC' || command === 'Z' || command === '@') {
-        // These commands take no parameters, so we ignore the data variable.
-        commandToSend = command;
-    } else if (command === 'D') {
-        // The D command takes a quoted string parameter.
-        commandToSend = `${command} "${data}"`;
-    } else if (data !== undefined && data !== null && String(data).length > 0) {
-        // All other commands (like TA with a value) get the data appended.
-        commandToSend = `${command} ${String(data)}`;
+    // Clean up the data string by removing quotes, normalizing spaces, and trimming whitespace
+    if (typeof processedData === 'string') {
+      processedData = processedData.replace(/"/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    if (String(processedData).toUpperCase().startsWith(command + ' ')) {
+      processedData = String(processedData).substring(command.length).trim();
+    }
+
+    if (!validateWriteCommand(command, processedData, this._log)) {
+        throw new Error(`Invalid command or parameters: ${command} ${processedData}`);
+    }
+
+    let commandToSend = command;
+    if (command === 'D') {
+        commandToSend = `${command} "${processedData}"`;
+    } else if (String(processedData).length > 0) {
+        commandToSend = `${command} ${processedData}`;
     }
 
     this._log.debug(`[Client.js] Sending command: ${commandToSend}`);

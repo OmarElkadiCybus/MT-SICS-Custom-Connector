@@ -1,7 +1,7 @@
 const Connection = require('Connection')
 const Client = require('./Client.js')
 const schema = require('./MtsicsConnection.json');
-const { validate } = require('./CommandValidator.js');
+const { validateReadCommand } = require('./CommandValidator.js');
 
 class MtsicsConnection extends Connection {
     constructor(params) {
@@ -55,8 +55,8 @@ class MtsicsConnection extends Connection {
             this.mode = address.mode;
         }
 
-        if (!validate(address.command)) {
-            throw new Error(`Invalid command: ${address.command}`);
+        if (!validateReadCommand(address.command, this._log)) {
+            throw new Error(`Invalid command for read: ${address.command}`);
         }
 
         const rawResponse = await this._client.read(address.command, address.timeout)
@@ -68,31 +68,28 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method (called for WRITE Endpoints)
     async handleWrite(address, writeData) {
-        this._log.debug(`[MtsicsConnection] handleWrite: address=${JSON.stringify(address)}, writeData=${writeData}`);
+        this._log.debug(`[MtsicsConnection] handleWrite: address=${JSON.stringify(address)}, writeData=${JSON.stringify(writeData)}`);
         if (address.mode) {
             this.mode = address.mode;
         }
 
-        let command = address.command;
-        let data = writeData;
-
-        if (typeof data === 'string') {
-            // Clean up the data string by removing quotes, normalizing spaces, and trimming whitespace
-            data = data.replace(/"/g, '').replace(/\s+/g, ' ').trim();
-
-            // If the user sends the full command string, extract the arguments
-            if (data.toUpperCase().startsWith(command.toUpperCase() + ' ')) {
-                data = data.substring(command.length).trim();
+        let data;
+        if (typeof writeData === 'object' && writeData !== null) {
+            const keys = Object.keys(writeData);
+            if (keys.length === 1 && keys[0] === 'value') {
+                data = writeData.value;
+            } else {
+                const errTxt = `Invalid writeData object. It must only contain a 'value' property. Received: ${JSON.stringify(writeData)}`;
+                this._log.error(errTxt);
+                throw new Error(errTxt);
             }
+        } else {
+            data = writeData;
         }
 
-        if (!validate(command, data)) {
-            throw new Error(`Invalid command or parameters: ${command} ${data}`);
-        }
-
-        const rawResponse = await this._client.write(command, data, address.timeout);
+        const rawResponse = await this._client.write(address.command, data, address.timeout);
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
-        this._updateMode(command);
+        this._updateMode(address.command);
         return parsedResponse;
     }
 
