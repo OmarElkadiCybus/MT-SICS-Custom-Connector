@@ -36,34 +36,16 @@ class Client extends EventEmitter {
     return this._sendCommand(address, timeout)
   }
 
-  write(address, data, timeout = 2000) {
-    const command = String(address || '').toUpperCase();
-    
-    let processedData = '';
-    if (data !== undefined && data !== null) {
-        processedData = String(data);
-    }
+  write(command, data, timeout = 2000) { 
 
-    // Clean up the data string by removing quotes, normalizing spaces, and trimming whitespace
-    if (typeof processedData === 'string') {
-      processedData = processedData.replace(/"/g, '').replace(/\s+/g, ' ').trim();
-    }
-
-    if (String(processedData).toUpperCase().startsWith(command + ' ')) {
-      processedData = String(processedData).substring(command.length).trim();
-    }
-
-    if (!validateWriteCommand(command, processedData, this._log)) {
-        throw new Error(`Invalid command or parameters: ${command} ${processedData}`);
-    }
+    validateWriteCommand(command, data, this._log)
+      
 
     let commandToSend = command;
-    if (command === 'D') {
-        commandToSend = `${command} "${processedData}"`;
-    } else if (String(processedData).length > 0) {
-        commandToSend = `${command} ${processedData}`;
+    if (String(data).length > 0) {
+        commandToSend = `${command} ${data}`;
     }
-
+    
     this._log.debug(`[Client.js] Sending command: ${commandToSend}`);
     return this._sendCommand(commandToSend, timeout)
   }

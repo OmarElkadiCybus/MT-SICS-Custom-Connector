@@ -68,28 +68,37 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method (called for WRITE Endpoints)
     async handleWrite(address, writeData) {
-        this._log.debug(`[MtsicsConnection] handleWrite: address=${JSON.stringify(address)}, writeData=${JSON.stringify(writeData)}`);
+        this._updateMode(address.command);
+        this._log.debug(`[MtsicsConnection] handleWrite: ${JSON.stringify(address)}, payload=${JSON.stringify(writeData)}`);
         if (address.mode) {
             this.mode = address.mode;
         }
 
-        let data;
+        let payload;
         if (typeof writeData === 'object' && writeData !== null) {
-            const keys = Object.keys(writeData);
-            if (keys.length === 1 && keys[0] === 'value') {
-                data = writeData.value;
-            } else {
-                const errTxt = `Invalid writeData object. It must only contain a 'value' property. Received: ${JSON.stringify(writeData)}`;
-                this._log.error(errTxt);
-                throw new Error(errTxt);
+            const hasValueProperty = Object.prototype.hasOwnProperty.call(writeData, 'value');
+            if (!hasValueProperty) {
+                throw new Error("Invalid writeData object. Missing 'value' property.");
             }
+            const onlyValueProperty = Object.keys(writeData).length === 1;
+            if (!onlyValueProperty) {
+                throw new Error("Invalid writeData object. It must only contain a 'value' property.");
+            }
+            payload = writeData.value;
+            this._log.debug(`[MtsicsConnection] Extracted data on object: ${payload}`);
         } else {
-            data = writeData;
+            if (typeof writeData !== 'string') {
+                this._log.warn(`[Client.js] the payload is not string, its type is ${typeof writeData}, converting to string`);
+                payload = String(writeData);
+            }
+            payload = writeData;
+            this._log.debug(`[MtsicsConnection] Using writeData directly: ${payload}`);
         }
 
-        const rawResponse = await this._client.write(address.command, data, address.timeout);
+        const rawResponse = await this._client.write(address.command, payload, address.timeout);
+        this._log.debug(`[MtsicsConnection] Raw response on ${address.command} ${payload} is: ${rawResponse}`);
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
-        this._updateMode(address.command);
+        this._log.debug(`[MtsicsConnection] Parsed response on write: ${JSON.stringify(parsedResponse)}`);
         return parsedResponse;
     }
 
