@@ -81,7 +81,7 @@ class MtsicsConnection extends Connection {
         const payloadCommands = ["TA", "PW", "D", "REF"];
         if (!payloadCommands.includes(address.command)) {
             if (writeData !== undefined && writeData !== null) {
-                this._log.warn(`[MtsicsConnection] Ignoring payload for command without payload support: ${address.command}`);
+                this._log.warn(`[MtsicsConnection] Ignoring payload for command ${address.command}, because it does not support/require payloads`);
             }
             writeData = undefined;
         }
@@ -89,7 +89,7 @@ class MtsicsConnection extends Connection {
         if (address.mode) {
             this.mode = address.mode;
         }
-        this._log.debug(`[MtsicsConnection] write command="${address.command}" payload=${JSON.stringify(writeData)} mode=${this.mode} timeout=${address.timeout || 'default'}`);
+        this._log.debug(`[MtsicsConnection] write command="${address.command}" payload=${JSON.stringify(writeData)} mode=${this.mode}`);
         let payload = this._extractPayload(address.command, writeData);
         payload = this._sanitizePayload(address.command, payload);
         validateWriteCommand(address.command, payload, this._log);

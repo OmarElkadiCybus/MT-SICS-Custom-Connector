@@ -15,6 +15,7 @@ import re
 import socketserver
 import threading
 import os
+import sys
 from distutils.util import strtobool
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
@@ -225,6 +226,18 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
 
 
+class QuietHTTPServer(ThreadingHTTPServer):
+    """HTTP server that suppresses noisy connection reset tracebacks."""
+
+    def handle_error(self, request, client_address):
+        ex = sys.exc_info()[1]
+        if isinstance(ex, (ConnectionResetError, BrokenPipeError)):
+            LOG.warning("HTTP control connection error from %s:%s: %s",
+                        client_address[0], client_address[1], ex.__class__.__name__)
+            return
+        super().handle_error(request, client_address)
+
+
 class ControlHttpHandler(BaseHTTPRequestHandler):
     """HTTP API to observe and manipulate the simulator state."""
 
@@ -343,8 +356,8 @@ def run_servers(args):
 
     tcp_server = ThreadedTCPServer((args.host, args.port),
                                    lambda *a, **kw: MtsicsTcpHandler(simulator, *a, **kw))
-    http_server = ThreadingHTTPServer((args.host, args.http_port),
-                                      lambda *a, **kw: ControlHttpHandler(simulator, *a, **kw))
+    http_server = QuietHTTPServer((args.host, args.http_port),
+                                  lambda *a, **kw: ControlHttpHandler(simulator, *a, **kw))
 
     LOG.info("MT-SICS TCP server listening on %s:%s", args.host, args.port)
     LOG.info("Control API available at http://%s:%s/state", args.host, args.http_port)
