@@ -1,7 +1,8 @@
 const Connection = require('Connection')
 const Client = require('./Client.js')
 const schema = require('./MtsicsConnection.json');
-// const cron = require('node-cron'); // REMOVED
+const { validateWriteCommand, validateReadCommand } = require('./CommandValidator.js');
+
 
 class MtsicsConnection extends Connection {
     constructor(params) {
@@ -11,22 +12,22 @@ class MtsicsConnection extends Connection {
         this._port = params.connection.port
         const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
         this._log = {
-            info: console.info,
-            warn: console.warn,
-            error: console.error,
-            debug: (LOG_LEVEL === 'debug') ? console.log : () => {},
+            info: (...args) => console.info('[INFO]', ...args),
+            warn: (...args) => console.warn('[WARN]', ...args),
+            error: (...args) => console.error('[ERROR]', ...args),
+            debug: (LOG_LEVEL === 'debug') ? (...args) => console.log('[DEBUG]', ...args) : () => {},
+            level: LOG_LEVEL,
         };
 
         this._client = new Client({ log: this._log })
         this._client
             .on('error', err => {
-                this._log.error('MtsicsConnection client error:', err.message);
+                this._log.error(`[MtsicsConnection] client error: ${err.message}`);
                 this.connectLost(err.message);
             })
             .on('close', this._onClose.bind(this))
         
         this.mode = 'WEIGHING'; // Default mode
-        this._subscriptions = new Map(); // NEW: To store active subscriptions
     }
 
     // Protocol implementation interface method
@@ -36,52 +37,71 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method
     async handleConnect() {
+        this._log.info(`[MtsicsConnection] connecting to ${this._host}:${this._port}`);
         await this._createConnection();
-        // Polling logic moved to handleSubscribe
+        this._log.info('[MtsicsConnection] connection established');
     }
 
     // Protocol implementation interface method
     async handleReconnect() {
+        this._log.warn('[MtsicsConnection] reconnect requested');
         await this._closeConnection()
         await this._createConnection()
+        this._log.info('[MtsicsConnection] reconnected');
     }
 
     // Protocol implementation interface method
     async handleDisconnect() {
-        // Polling logic moved to handleSubscribe
-        // Stop all active polling jobs
-        for (const [key, { job }] of this._subscriptions.entries()) {
-            if (job) {
-                clearInterval(job); // Changed from job.stop()
-                this._log.info(`Polling job for ${key} stopped.`);
-            }
-        }
-        this._subscriptions.clear(); // Clear subscriptions
+        this._log.info('[MtsicsConnection] disconnect requested');
         await this._closeConnection()
     }
 
     // Protocol implementation interface method (called for READ and SUBSCRIBE Endpoints)
     async handleRead(address, requestData = {}) {
+        this._updateMode(address.command);
         if (address.mode) {
             this.mode = address.mode;
         }
-        const rawResponse = await this._client.read(address.command)
+        this._log.debug(`[MtsicsConnection] read command="${address.command}" mode=${this.mode} timeout=${address.timeout || 'default'}`);
+        validateReadCommand(address.command, this._log);
+        let rawResponse;
+        try {
+            rawResponse = await this._client.read(address.command, address.timeout)
+        } catch (err) {
+            this._log.error(`[MtsicsConnection] read failed command="${address.command}" error=${err.message}`);
+            throw err;
+        }
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
-        const readTimeout = address.timeout || 5000; // Default to 5 seconds if not specified
-        this._updateMode(address.command);
          
         return parsedResponse;
     }
 
     // Protocol implementation interface method (called for WRITE Endpoints)
     async handleWrite(address, writeData) {
-        this._log.debug(`[MtsicsConnection] handleWrite: address=${JSON.stringify(address)}, writeData=${writeData}`);
+        const payloadCommands = ["TA", "PW", "D", "REF"];
+        if (!payloadCommands.includes(address.command)) {
+            if (writeData !== undefined && writeData !== null) {
+                this._log.warn(`[MtsicsConnection] Ignoring payload for command without payload support: ${address.command}`);
+            }
+            writeData = undefined;
+        }
+        this._updateMode(address.command);
         if (address.mode) {
             this.mode = address.mode;
         }
-        const rawResponse = await this._client.write(address.command, writeData);
+        this._log.debug(`[MtsicsConnection] write command="${address.command}" payload=${JSON.stringify(writeData)} mode=${this.mode} timeout=${address.timeout || 'default'}`);
+        let payload = this._extractPayload(address.command, writeData);
+        payload = this._sanitizePayload(address.command, payload);
+        validateWriteCommand(address.command, payload, this._log);
+        let rawResponse;
+        try {
+            rawResponse = await this._client.write(address.command, payload, address.timeout);
+        } catch (err) {
+            throw err;
+        }
+        this._log.debug(`[MtsicsConnection] Raw response on ${address.command} ${payload?payload:''} is: ${rawResponse}`);
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
-        this._updateMode(address.command);
+        this._log.debug(`[MtsicsConnection] Parsed response on write: ${JSON.stringify(parsedResponse)}`);
         return parsedResponse;
     }
 
@@ -93,15 +113,27 @@ class MtsicsConnection extends Connection {
 
         // Handle single-word error responses
         if (parts.length === 1) {
-            if (response === 'ES') throw new Error('MT-SICS: Syntax Error');
-            if (response === 'EL') throw new Error('MT-SICS: Logical Error (invalid command)');
+            if (response === 'ES') {
+                this._log.warn(`[MtsicsConnection] syntax error response: ${response}`);
+                throw new Error('MT-SICS: Syntax Error');
+            }
+            if (response === 'EL') {
+                this._log.warn(`[MtsicsConnection] logical error response: ${response}`);
+                throw new Error('MT-SICS: Logical Error (invalid command)');
+            }
             // Potentially other single-word responses
             return { raw: response };
         }
 
         // Handle generic overload/underload errors
-        if (status === '+') throw new Error(`MT-SICS: Overload on command "${command}"`);
-        if (status === '-') throw new Error(`MT-SICS: Underload on command "${command}"`);
+        if (status === '+') {
+            this._log.warn(`[MtsicsConnection] overload on command ${command}: ${response}`);
+            throw new Error(`MT-SICS: Overload on command "${command}"`);
+        }
+        if (status === '-') {
+            this._log.warn(`[MtsicsConnection] underload on command ${command}: ${response}`);
+            throw new Error(`MT-SICS: Underload on command "${command}"`);
+        }
 
         // Handle '@' command response (e.g., "I4 A <SerialNumber>")
         if ((command === 'I4' || command === 'IA') && status === 'A' && parts.length >= 2) {
@@ -215,7 +247,10 @@ class MtsicsConnection extends Connection {
 
         // Handle Display responses (e.g., "D A Hello World")
         if (command === 'D') {
-            if (status === 'L') throw new Error('MT-SICS: Logical Error (invalid parameter for D)');
+            if (status === 'L') {
+                this._log.warn('[MtsicsConnection] logical error for D command response');
+                throw new Error('MT-SICS: Logical Error (invalid parameter for D)');
+            }
             // If it's an acknowledgement (e.g., "D A"), treat it as a success
             if (status.endsWith('A')) {
                 return { success: true, command, status: 'OK', raw: response };
@@ -238,6 +273,7 @@ class MtsicsConnection extends Connection {
         // This 'I' status is distinct from the 'I' used for unstable weight in some older protocols
         // With the simulator now returning 'D' for unstable, 'I' here should strictly mean 'not executable'
         if (status.endsWith('I')) {
+            this._log.warn(`[MtsicsConnection] command not executable: ${response}`);
             throw new Error(`MT-SICS: Command "${command}" not executable.`);
         }
 
@@ -247,10 +283,12 @@ class MtsicsConnection extends Connection {
     }
 
     _updateMode(command) {
-        if (['PCS', 'PW', 'REF'].includes(command)) {
-            this.mode = 'COUNTING';
-        } else if (['@', 'Z', 'T', 'TA', 'TAC'].includes(command)) {
-            this.mode = 'WEIGHING';
+        const nextMode = (['PCS', 'PW', 'REF'].includes(command)) ? 'COUNTING'
+                         : (['@', 'Z', 'T', 'TA', 'TAC'].includes(command) ? 'WEIGHING' : this.mode);
+
+        if (nextMode !== this.mode) {
+            this._log.info(`[MtsicsConnection] switching mode ${this.mode} -> ${nextMode} due to command ${command}`);
+            this.mode = nextMode;
         }
         // Other commands might also affect mode, add as needed
     }
@@ -259,6 +297,7 @@ class MtsicsConnection extends Connection {
         try {
             await this._client.connect(this._host, this._port)
         } catch (err) {
+            this._log.error(`[MtsicsConnection] connect error: ${err.message}`);
             switch (this.getState()) {
                 case 'connecting':
                     this.connectFailed(err.message)
@@ -285,9 +324,55 @@ class MtsicsConnection extends Connection {
     }
 
     _onClose() {
-        if (this.getState() === 'connected') this.connectLost()
+        if (this.getState() === 'connected') {
+            this._log.warn('[MtsicsConnection] socket closed unexpectedly; marking connection lost');
+            this.connectLost()
+        }
+    }
+
+    _sanitizePayload(command, payload) {
+        if (payload === undefined || payload === null) {
+            return payload;
+        }
+
+        let text = String(payload).trim();
+
+        // Strip surrounding quotes
+        if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
+            text = text.slice(1, -1).trim();
+        }
+
+        // If payload already prepends the command, drop it
+        const cmdPrefix = new RegExp(`^${command}\\s+`, 'i');
+        text = text.replace(cmdPrefix, '').trim();
+
+        if (command === 'D') {
+            return `"${text}"`;
+        }
+
+        if (command === 'TA' || command === 'PW') {
+            text = text.replace(/\s+/g, ' ');
+        }
+
+        this._log.debug(`[MtsicsConnection] sanitized payload for ${command}: ${text}`);
+        return text;
+    }
+
+    _extractPayload(command, writeData) {
+        let payload = writeData;
+        if (typeof writeData === 'object' && writeData !== null) {
+            const hasValueProperty = Object.prototype.hasOwnProperty.call(writeData, 'value');
+            const onlyValueProperty = hasValueProperty && Object.keys(writeData).length === 1;
+            if (!onlyValueProperty) {
+                throw new Error("Invalid writeData object. It must only contain a 'value' property.");
+            }
+            payload = writeData.value;
+        } else if (writeData !== undefined && writeData !== null && typeof writeData !== 'string') {
+            payload = String(writeData);
+        }
+        this._log.debug(`[MtsicsConnection] Extracted payload for the command ${command} is: ${payload}`);
+        return payload;
     }
 }
 
 module.exports = MtsicsConnection
-

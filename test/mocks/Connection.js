@@ -6,6 +6,7 @@ class MockConnection extends EventEmitter {
         super();
         this.params = params;
         this.state = 'disconnected';
+        this.connectionLostCalled = false;
     }
 
     getState() {
@@ -33,8 +34,11 @@ class MockConnection extends EventEmitter {
     }
 
     connectLost(error) {
-        this.state = 'connectionLost';
-        this.emit('connectionLost', error);
+        if (!this.connectionLostCalled) {
+            this.connectionLostCalled = true;
+            this.state = 'connectionLost';
+            this.emit('connectionLost', error);
+        }
     }
 }
 

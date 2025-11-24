@@ -9,11 +9,18 @@ const { expect } = chai;
 
 describe('MtsicsConnection Unit Tests', () => {
     const mockServer = new MockScaleServer();
-    const port = 9002;
+    let port;
     let client;
 
-    before(async () => {
-        await mockServer.start(port);
+    before(async function () {
+        try {
+            port = await mockServer.start(0);
+        } catch (err) {
+            if (err.code === 'EPERM') {
+                this.skip();
+            }
+            throw err;
+        }
     });
 
     after(async () => {
@@ -21,7 +28,8 @@ describe('MtsicsConnection Unit Tests', () => {
     });
 
     beforeEach(() => {
-        client = new MtsicsConnection({ connection: { host: 'localhost', port } });
+        const log = { info: ()=>{}, warn: ()=>{}, error: ()=>{}, debug: ()=>{} };
+        client = new MtsicsConnection({ connection: { host: 'localhost', port }, log });
         mockServer.clearResponses();
     });
 
@@ -29,7 +37,15 @@ describe('MtsicsConnection Unit Tests', () => {
         if (client) {
             await client.handleDisconnect();
         }
+        mockServer.setSilent(false);
     });
+
+    const expectTimeoutToDropConnection = async (operation, expectedMessage) => {
+        await expect(operation()).to.be.rejectedWith(expectedMessage);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(client.getState()).to.equal('connectionLost');
+        expect(client.connectionLostCalled).to.be.true;
+    };
 
     it('should connect to the mock server', async () => {
         await client.handleConnect();
@@ -74,6 +90,50 @@ describe('MtsicsConnection Unit Tests', () => {
         });
     });
 
+    it('should handle write command with JSON object', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('TA 123.45 g', 'TA A 123.45 g');
+        const response = await client.handleWrite({ command: 'TA' }, { value: '123.45 g' });
+        expect(response).to.deep.equal({
+            command: 'TA',
+            status: 'OK',
+            value: 123.45,
+            unit: 'g',
+            raw: 'TA A 123.45 g',
+        });
+    });
+
+    it('should handle write command with JSON object containing a string', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('D "Hello"', 'D A');
+        const response = await client.handleWrite({ command: 'D' }, { value: 'Hello' });
+        expect(response).to.deep.equal({
+            success: true,
+            command: 'D',
+            status: 'OK',
+            raw: 'D A',
+        });
+    });
+
+    it('should throw error for invalid JSON object in writeData', async () => {
+        await client.handleConnect();
+        await expect(client.handleWrite({ command: 'TA' }, { foo: 'bar' }))
+            .to.be.rejectedWith("Invalid writeData object. It must only contain a 'value' property.");
+    });
+
+    it('should handle unclean string in writeData', async () => {
+        await client.handleConnect();
+        mockServer.setResponse('TA 123.45 g', 'TA A 123.45 g');
+        const response = await client.handleWrite({ command: 'TA' }, '  "TA   123.45   g"  ');
+        expect(response).to.deep.equal({
+            command: 'TA',
+            status: 'OK',
+            value: 123.45,
+            unit: 'g',
+            raw: 'TA A 123.45 g',
+        });
+    });
+
     it("should handle 'I4' response for '@' command with serial number", async () => {
         await client.handleConnect();
         mockServer.setResponse('@', 'I4 A "123456789"');
@@ -102,15 +162,15 @@ describe('MtsicsConnection Unit Tests', () => {
 
     it('should handle syntax error from scale', async () => {
         await client.handleConnect();
-        mockServer.setResponse('INVALID', 'ES');
-        await expect(client.handleRead({ command: 'INVALID' }))
+        mockServer.setResponse('S', 'ES');
+        await expect(client.handleRead({ command: 'S' }))
             .to.be.rejectedWith('MT-SICS: Syntax Error');
     });
     
     it('should handle logical error from scale', async () => {
         await client.handleConnect();
-        mockServer.setResponse('C', 'EL');
-        await expect(client.handleRead({ command: 'C' }))
+        mockServer.setResponse('S', 'EL');
+        await expect(client.handleRead({ command: 'S' }))
             .to.be.rejectedWith('MT-SICS: Logical Error (invalid command)');
     });
 
@@ -148,10 +208,10 @@ describe('MtsicsConnection Unit Tests', () => {
         });
     });
 
-    it('should handle ZI command response', async () => {
+    it('should handle ZI command response on write', async () => {
         await client.handleConnect();
         mockServer.setResponse('ZI', 'ZI D');
-        const response = await client.handleRead({ command: 'ZI' });
+        const response = await client.handleWrite({ command: 'ZI' });
         expect(response).to.deep.equal({
             command: 'ZI',
             status: 'dynamic',
@@ -191,6 +251,26 @@ describe('MtsicsConnection Unit Tests', () => {
             .to.be.rejectedWith('MT-SICS: Logical Error (invalid parameter for D)');
     });
 
+    it('should drop the connection when a read command times out', async () => {
+        await client.handleConnect();
+        mockServer.setSilent(true);
+
+        await expectTimeoutToDropConnection(
+            () => client.handleRead({ command: 'S', timeout: 100 }),
+            'Command "S" timed out'
+        );
+    }).timeout(500);
+
+    it('should drop the connection when a write command times out', async () => {
+        await client.handleConnect();
+        mockServer.setSilent(true);
+
+        await expectTimeoutToDropConnection(
+            () => client.handleWrite({ command: 'Z', timeout: 100 }),
+            'Command "Z" timed out'
+        );
+    }).timeout(500);
+
     it('should handle connection loss', (done) => {
         client.handleConnect().then(() => {
             client.on('connectionLost', () => {
@@ -199,9 +279,9 @@ describe('MtsicsConnection Unit Tests', () => {
             });
 
             // Stop the server to trigger a connection loss
-            mockServer.stop().then(() => {
+            mockServer.stop().then(async () => {
                  // restart for other tests
-                 mockServer.start(port);
+                 port = await mockServer.start(port || 0);
             });
         });
     });

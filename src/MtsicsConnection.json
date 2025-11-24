@@ -43,15 +43,6 @@
           "enum": ["ascii"],
           "default": "ascii"
         },
-        "responseTimeoutMs": {
-          "$id": "/properties/responseTimeoutMs",
-          "type": "integer",
-          "title": "Response timeout (ms)",
-          "description": "Maximum time to await an MT-SICS response before raising a timeout.",
-          "default": 1500,
-          "minimum": 100,
-          "examples": [1500, 3000]
-        },
         "connectionStrategy": {
           "$id": "/properties/connectionStrategy",
           "type": "object",
