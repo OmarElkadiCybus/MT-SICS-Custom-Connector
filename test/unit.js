@@ -9,11 +9,18 @@ const { expect } = chai;
 
 describe('MtsicsConnection Unit Tests', () => {
     const mockServer = new MockScaleServer();
-    const port = 9002;
+    let port;
     let client;
 
-    before(async () => {
-        await mockServer.start(port);
+    before(async function () {
+        try {
+            port = await mockServer.start(0);
+        } catch (err) {
+            if (err.code === 'EPERM') {
+                this.skip();
+            }
+            throw err;
+        }
     });
 
     after(async () => {
@@ -201,10 +208,10 @@ describe('MtsicsConnection Unit Tests', () => {
         });
     });
 
-    it('should handle ZI command response', async () => {
+    it('should handle ZI command response on write', async () => {
         await client.handleConnect();
         mockServer.setResponse('ZI', 'ZI D');
-        const response = await client.handleRead({ command: 'ZI' });
+        const response = await client.handleWrite({ command: 'ZI' });
         expect(response).to.deep.equal({
             command: 'ZI',
             status: 'dynamic',
@@ -272,9 +279,9 @@ describe('MtsicsConnection Unit Tests', () => {
             });
 
             // Stop the server to trigger a connection loss
-            mockServer.stop().then(() => {
+            mockServer.stop().then(async () => {
                  // restart for other tests
-                 mockServer.start(port);
+                 port = await mockServer.start(port || 0);
             });
         });
     });

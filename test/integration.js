@@ -8,11 +8,18 @@ const { expect } = chai;
 
 describe('Integration Tests', () => {
     const mockServer = new MockScaleServer();
-    const port = 9002;
+    let port;
     let connection;
 
-    before(async () => {
-        await mockServer.start(port);
+    before(async function () {
+        try {
+            port = await mockServer.start(0);
+        } catch (err) {
+            if (err.code === 'EPERM') {
+                this.skip();
+            }
+            throw err;
+        }
     });
 
     after(async () => {
