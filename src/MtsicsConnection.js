@@ -90,7 +90,7 @@ class MtsicsConnection extends Connection {
             this.mode = address.mode;
         }
         this._log.debug(`[MtsicsConnection] write command="${address.command}" payload=${JSON.stringify(writeData)} mode=${this.mode} timeout=${address.timeout || 'default'}`);
-        let payload = this._extractPayload(writeData);
+        let payload = this._extractPayload(address.command, writeData);
         payload = this._sanitizePayload(address.command, payload);
         validateWriteCommand(address.command, payload, this._log);
         let rawResponse;
@@ -358,7 +358,7 @@ class MtsicsConnection extends Connection {
         return text;
     }
 
-    _extractPayload(writeData) {
+    _extractPayload(command, writeData) {
         let payload = writeData;
         if (typeof writeData === 'object' && writeData !== null) {
             const hasValueProperty = Object.prototype.hasOwnProperty.call(writeData, 'value');
@@ -368,10 +368,9 @@ class MtsicsConnection extends Connection {
             }
             payload = writeData.value;
         } else if (writeData !== undefined && writeData !== null && typeof writeData !== 'string') {
-            this._log.warn(`[Client.js] the payload is not string, its type is ${typeof writeData}, converting to string`);
             payload = String(writeData);
         }
-        this._log.debug(`[MtsicsConnection] Extracted payload is: ${payload}`);
+        this._log.debug(`[MtsicsConnection] Extracted payload for the command ${command} is: ${payload}`);
         return payload;
     }
 }
