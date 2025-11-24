@@ -10,9 +10,12 @@ protocol) with an HTTP control API suitable for automated testing.
 import argparse
 import json
 import logging
+import random
 import re
 import socketserver
 import threading
+import os
+from distutils.util import strtobool
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 
@@ -42,50 +45,58 @@ class MTSICSSimulator:
         self.display_text = text
 
     def handle_command(self, command: str) -> str:
-        command_upper = command.strip().upper()
+        command_stripped = command.strip()
+        parts = command_stripped.split(maxsplit=1)
+        command_name = parts[0].upper()
+        args = parts[1] if len(parts) > 1 else ""
 
-        # Handle commands with arguments
-        ta_match = re.match(r"TA\s+(\d+\.?\d*)", command_upper)
-        d_match = re.match(r"D\s+\"(.+)\"", command_upper)
-
-        if ta_match:
+        if command_name == "TA":
+            if not args:
+                return self._format_tare()
+            arg_parts = args.split()
             try:
-                value = float(ta_match.group(1))
+                value = float(arg_parts[0])
+                unit = arg_parts[1]
                 self.set_tare(value)
-                return "TA A\r\n"
-            except ValueError:
-                return "EL\r\n" # Logical Error for invalid value
-        elif d_match:
-            text = d_match.group(1)
-            self.set_display_text(text)
-            return "D A\r\n"
-        elif command_upper == "SI":
+                return f"TA A {value:.2f} {unit}\r\n"
+            except (ValueError, IndexError):
+                return "EL\r\n"
+
+        elif command_name == "D":
+            d_match = re.match(r"\"(.+)\"", args)
+            if d_match:
+                text = d_match.group(1)
+                self.set_display_text(text)
+                return "D A\r\n"
+            else:
+                return self._format_display()
+
+        elif command_name == "SI":
+            self.weight = round(random.uniform(0, 500), 2)
             return self._format_response(stable=False)
-        elif command_upper == "S":
+        elif command_name == "S":
+            self.weight = round(random.uniform(0, 500), 2)
             return self._format_response(stable=self.stable)
-        elif command_upper == "T":
+        elif command_name == "T":
             self.tare_value = self.weight
             return "T A\r\n"
-        elif command_upper == "Z":
+        elif command_name == "Z":
             self.weight = 0.0
             self.tare_value = 0.0
             return "Z A\r\n"
-        elif command_upper == "TA": # For TA without value, return current tare
-            return self._format_tare()
-        elif command_upper == "TAC":
+        elif command_name == "TAC":
             self.tare_value = 0.0
             return "TAC A\r\n"
-        elif command_upper == "@":
+        elif command_name == "@":
             # Simulate a basic reset acknowledgement
             return "@ A\r\n"
-        elif command_upper == "PCS":
+        elif command_name == "PCS":
+            self.pcs_count = random.randint(0, 100)
             return self._format_pcs()
-        elif command_upper == "DW":
+        elif command_name == "DW":
             return "DW A\r\n"
-        elif command_upper == "?":
+        elif command_name == "?":
             return "I4 MT-SICS Simulator V1.0\r\n"
-        elif command_upper == "D": # For D without text, return current display text
-            return self._format_display()
 
         return "ES\r\n"
 
@@ -114,6 +125,7 @@ class ThreadSafeSimulator:
         self._stable = True
         self._last_command = None
         self._last_response = None
+        self._silent = False
 
     def set_weight(self, weight: float):
         with self._lock:
@@ -132,8 +144,16 @@ class ThreadSafeSimulator:
         with self._lock:
             self._sim.set_pcs(count)
 
+    def set_silent(self, silent: bool):
+        with self._lock:
+            self._silent = bool(silent)
+
     def handle_command(self, command: str) -> str:
         with self._lock:
+            if self._silent:
+                self._last_command = command
+                self._last_response = None
+                return ""
             response = self._sim.handle_command(command)
             self._last_command = command
             self._last_response = response.strip()
@@ -150,6 +170,7 @@ class ThreadSafeSimulator:
                 "pieces": getattr(self._sim, "pcs_count", 0),
                 "lastCommand": self._last_command,
                 "lastResponse": self._last_response,
+                "mute": self._silent,
             }
 
 
@@ -175,10 +196,12 @@ class MtsicsTcpHandler(socketserver.StreamRequestHandler):
                 
                 # Process the command using the simulator
                 response = self._sim.handle_command(decoded_data)
-                
-                self.wfile.write(response.encode("ascii")) # Send the simulator's response
-                self.wfile.flush()
-                LOG.info("Sent response: %r", response.rstrip())
+                if response:
+                    self.wfile.write(response.encode("ascii")) # Send the simulator's response
+                    self.wfile.flush()
+                    LOG.info("Sent response: %r", response.rstrip())
+                else:
+                    LOG.info("Simulator muted; no response sent.")
         finally:
             LOG.info("TCP client disconnected: %s", client)
 
@@ -260,6 +283,10 @@ class ControlHttpHandler(BaseHTTPRequestHandler):
                 return self._write_json({"error": "pieces must be integer"}, status=400)
             self._sim.set_pcs(pieces)
             updated["pieces"] = pieces
+        if "mute" in body:
+            mute = bool(body["mute"])
+            self._sim.set_silent(mute)
+            updated["mute"] = mute
 
         state = self._sim.snapshot()
         state.update(updated)
@@ -270,6 +297,7 @@ def run_servers(args):
     simulator = ThreadSafeSimulator(MTSICSSimulator())
     simulator.set_stable(not args.unstable)
     simulator.set_weight(args.weight)
+    simulator.set_silent(args.silent)
 
     tcp_server = ThreadedTCPServer((args.host, args.port),
                                    lambda *a, **kw: MtsicsTcpHandler(simulator, *a, **kw))
@@ -307,11 +335,19 @@ def parse_args():
     parser.add_argument("--log-level", default="INFO",
                         choices=["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"],
                         help="Logging verbosity")
+    parser.add_argument("--silent", action="store_true",
+                        help="Start simulator muted (no TCP responses)")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    # Env override for silent mode
+    if os.getenv("SIM_SILENT") is not None:
+        try:
+            args.silent = bool(strtobool(os.getenv("SIM_SILENT")))
+        except ValueError:
+            pass
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

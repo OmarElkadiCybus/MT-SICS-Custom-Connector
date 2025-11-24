@@ -1,14 +1,19 @@
 const { EventEmitter } = require('events')
 const net = require('net')
-const { validateWriteCommand } = require('./CommandValidator.js');
 
 class Client extends EventEmitter {
   constructor(params = {}) {
     super()
     this._log = params.log || console;
     this.conn = new net.Socket()
-    this.conn.on('close', (hadError) => this.emit('close', hadError))
-    this.conn.on('error', (err) => this.emit('error', err))
+    this.conn.on('close', (hadError) => {
+      this._log.info(`[Client] socket closed${hadError ? ' due to error' : ''}`)
+      this.emit('close', hadError)
+    })
+    this.conn.on('error', (err) => {
+      this._log.error(`[Client] socket error: ${err.message}`)
+      this.emit('error', err)
+    })
     this.conn.on('data', (data) => this._handleData(data))
 
     this.commandQueue = []
@@ -23,42 +28,44 @@ class Client extends EventEmitter {
       this.conn.once('error', (err) => reject(err))
       this.conn.connect({ host, port }, () => {
         this.conn.off('error', reject)
+        this._log.info(`[Client] connected to ${host}:${port}`)
         resolve()
       })
     })
   }
 
   end() {
+    this._log.info('[Client] closing socket')
     this.conn.destroy()
   }
 
   read(address, timeout = 2000) {
+    this._log.debug(`[Client] queueing read: ${address}`);
     return this._sendCommand(address, timeout)
   }
 
   write(command, data, timeout = 2000) { 
-
-    validateWriteCommand(command, data, this._log)
       
-
     let commandToSend = command;
-    if (String(data).length > 0) {
+    const hasPayload = data !== undefined && data !== null && String(data).length > 0;
+    if (hasPayload) {
         commandToSend = `${command} ${data}`;
     }
     
-    this._log.debug(`[Client.js] Sending command: ${commandToSend}`);
+    this._log.debug(`[Client] queueing write: ${commandToSend}`);
     return this._sendCommand(commandToSend, timeout)
   }
 
   _sendCommand(command, timeout) {
     return new Promise((resolve, reject) => {
       this.commandQueue.push({ command, resolve, reject, timeout })
+      this._log.debug(`[Client] enqueue command="${command}" timeout=${timeout} queueLen=${this.commandQueue.length}`);
       this._processQueue()
     })
   }
 
   _processQueue() {
-    this._log.debug(`[Client.js] _processQueue called. isProcessing: ${this.isProcessing}, queue length: ${this.commandQueue.length}`);
+    this._log.debug(`[Client] _processQueue isProcessing=${this.isProcessing} queueLen=${this.commandQueue.length}`);
     if (this.isProcessing || this.commandQueue.length === 0) {
       return
     }
@@ -80,14 +87,17 @@ class Client extends EventEmitter {
     this.responseTimeout = setTimeout(() => {
       if (this.responseCallback) {
         const err = new Error(`Command "${command}" timed out`);
+        this._log.warn(`[Client] timeout: ${err.message} after ${timeout}ms; closing socket, pending=${this.commandQueue.length}`);
         this.conn.destroy(); // Just destroy, don't pass error
         this.emit('error', err); // Emit error manually
         this.responseCallback(err);
         this.responseCallback = null;
+        this.isProcessing = false;
+        this._processQueue();
       }
     }, timeout)
 
-    this._log.debug(`[Client.js] Writing to socket: ${command}\r\n`);
+    this._log.debug(`[Client] sending "${command}" (timeout ${timeout}ms)`)
     this.conn.write(`${command}\r\n`)
   }
 
@@ -103,9 +113,11 @@ class Client extends EventEmitter {
         this.responseCallback = null; // Prevent the same callback from being used for the next item in the buffer
 
         clearTimeout(this.responseTimeout)
+        this._log.debug(`[Client] received response: ${response}`)
         callback(null, response)
       } else {
         // Handle unsolicited data if necessary
+        this._log.warn(`[Client] unsolicited response (no pending command): ${response}`)
         this.emit('unsolicited-data', response)
       }
     }

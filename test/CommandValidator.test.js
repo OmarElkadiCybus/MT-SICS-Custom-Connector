@@ -15,11 +15,11 @@ describe('CommandValidator', () => {
         });
 
         it('should not validate unknown commands', () => {
-            expect(validateReadCommand('FAKE', mockLog)).to.be.false;
+            expect(() => validateReadCommand('FAKE', mockLog)).to.throw();
         });
 
         it('should not validate commands with spaces', () => {
-            expect(validateReadCommand('S ', mockLog)).to.be.false;
+            expect(() => validateReadCommand('S ', mockLog)).to.throw();
         });
     });
 
@@ -32,8 +32,8 @@ describe('CommandValidator', () => {
         });
 
         it('should invalidate commands with unexpected arguments', () => {
-            expect(validateWriteCommand('S', '123', mockLog)).to.be.false;
-            expect(validateWriteCommand('T', 'abc', mockLog)).to.be.false;
+            expect(() => validateWriteCommand('S', '123', mockLog)).to.throw();
+            expect(() => validateWriteCommand('T', 'abc', mockLog)).to.throw();
         });
 
         it('should validate TA and PW commands with arguments', () => {
@@ -43,25 +43,25 @@ describe('CommandValidator', () => {
         });
 
         it('should invalidate TA and PW commands without arguments', () => {
-            expect(validateWriteCommand('TA', null, mockLog)).to.be.false;
-            expect(validateWriteCommand('PW', null, mockLog)).to.be.false;
+            expect(() => validateWriteCommand('TA', null, mockLog)).to.throw();
+            expect(() => validateWriteCommand('PW', null, mockLog)).to.throw();
         });
 
         it('should invalidate TA and PW commands with wrong arguments', () => {
-            expect(validateWriteCommand('TA', 'abc', mockLog)).to.be.false;
-            expect(validateWriteCommand('TA', '100', mockLog)).to.be.false;
-            expect(validateWriteCommand('PW', 'xyz', mockLog)).to.be.false;
-            expect(validateWriteCommand('PW', '50', mockLog)).to.be.false;
+            expect(() => validateWriteCommand('TA', 'abc', mockLog)).to.throw();
+            expect(() => validateWriteCommand('TA', '100', mockLog)).to.throw();
+            expect(() => validateWriteCommand('PW', 'xyz', mockLog)).to.throw();
+            expect(() => validateWriteCommand('PW', '50', mockLog)).to.throw();
         });
 
         it('should validate D command with a string argument', () => {
-            expect(validateWriteCommand('D', 'Hello World', mockLog)).to.be.true;
-            expect(validateWriteCommand('D', '123', mockLog)).to.be.true;
-            expect(validateWriteCommand('D', '', mockLog)).to.be.true;
+            expect(validateWriteCommand('D', '"Hello World"', mockLog)).to.be.true;
+            expect(validateWriteCommand('D', '"123"', mockLog)).to.be.true;
+            expect(validateWriteCommand('D', '""', mockLog)).to.be.true;
         });
 
         it('should invalidate D command without a string argument', () => {
-            expect(validateWriteCommand('D', null, mockLog)).to.be.false;
+            expect(() => validateWriteCommand('D', null, mockLog)).to.throw();
         });
     });
 });

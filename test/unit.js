@@ -33,6 +33,13 @@ describe('MtsicsConnection Unit Tests', () => {
         mockServer.setSilent(false);
     });
 
+    const expectTimeoutToDropConnection = async (operation, expectedMessage) => {
+        await expect(operation()).to.be.rejectedWith(expectedMessage);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(client.getState()).to.equal('connectionLost');
+        expect(client.connectionLostCalled).to.be.true;
+    };
+
     it('should connect to the mock server', async () => {
         await client.handleConnect();
         expect(client.getState()).to.equal('connected');
@@ -237,16 +244,24 @@ describe('MtsicsConnection Unit Tests', () => {
             .to.be.rejectedWith('MT-SICS: Logical Error (invalid parameter for D)');
     });
 
-    it('should handle command timeout and trigger connection lost', async () => {
+    it('should drop the connection when a read command times out', async () => {
         await client.handleConnect();
         mockServer.setSilent(true);
-        
-        await expect(client.handleRead({ command: 'S', timeout: 100 })).to.be.rejectedWith('Command "S" timed out');
 
-        // Give some time for the close event to propagate
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await expectTimeoutToDropConnection(
+            () => client.handleRead({ command: 'S', timeout: 100 }),
+            'Command "S" timed out'
+        );
+    }).timeout(500);
 
-        expect(client.getState()).to.equal('connectionLost');
+    it('should drop the connection when a write command times out', async () => {
+        await client.handleConnect();
+        mockServer.setSilent(true);
+
+        await expectTimeoutToDropConnection(
+            () => client.handleWrite({ command: 'Z', timeout: 100 }),
+            'Command "Z" timed out'
+        );
     }).timeout(500);
 
     it('should handle connection loss', (done) => {
