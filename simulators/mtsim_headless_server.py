@@ -30,6 +30,7 @@ class MTSICSSimulator:
         self.tare_value = 0.0
         self.stable = True
         self.pcs_count = 0
+        self.reference_size = None
         self.display_text = ""
 
     def set_weight(self, value: float):
@@ -93,6 +94,20 @@ class MTSICSSimulator:
         elif command_name == "PCS":
             self.pcs_count = random.randint(0, 100)
             return self._format_pcs()
+        elif command_name == "REF":
+            if args:
+                try:
+                    ref_size = int(args.split()[0])
+                except (ValueError, IndexError):
+                    return "EL\r\n"
+                if ref_size <= 0:
+                    return "REF -\r\n"
+                self.reference_size = ref_size
+            elif self.reference_size is None:
+                return "REF -\r\n"
+            # For simplicity, set pcs_count to the reference size
+            self.pcs_count = self.reference_size or self.pcs_count
+            return "REF A\r\n"
         elif command_name == "DW":
             return "DW A\r\n"
         elif command_name == "?":
@@ -234,27 +249,39 @@ class ControlHttpHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/") == "/state":
-            self._write_json(self._sim.snapshot())
+            try:
+                self._write_json(self._sim.snapshot())
+            except ConnectionResetError:
+                LOG.warning("HTTP GET /state aborted: connection reset by peer")
         else:
             self._write_json({"error": "not found"}, status=404)
 
     def do_POST(self):
         if self.path.rstrip("/") != "/state":
-            self._write_json({"error": "not found"}, status=404)
+            try:
+                self._write_json({"error": "not found"}, status=404)
+            except ConnectionResetError:
+                LOG.warning("HTTP POST unknown path aborted: connection reset by peer")
             return
 
         length_header = self.headers.get("Content-Length")
         try:
             length = int(length_header or "0")
         except ValueError:
-            self._write_json({"error": "invalid content length"}, status=400)
+            try:
+                self._write_json({"error": "invalid content length"}, status=400)
+            except ConnectionResetError:
+                LOG.warning("HTTP POST /state aborted: connection reset by peer")
             return
 
         raw = self.rfile.read(length)
         try:
             body = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
-            self._write_json({"error": "invalid json payload"}, status=400)
+            try:
+                self._write_json({"error": "invalid json payload"}, status=400)
+            except ConnectionResetError:
+                LOG.warning("HTTP POST /state aborted: connection reset by peer")
             return
 
         updated = {}
@@ -262,7 +289,11 @@ class ControlHttpHandler(BaseHTTPRequestHandler):
             try:
                 weight = float(body["weight"])
             except (TypeError, ValueError):
-                return self._write_json({"error": "weight must be numeric"}, status=400)
+                try:
+                    return self._write_json({"error": "weight must be numeric"}, status=400)
+                except ConnectionResetError:
+                    LOG.warning("HTTP POST /state aborted: connection reset by peer")
+                    return
             self._sim.set_weight(weight)
             updated["weight"] = weight
         if "stable" in body:
@@ -273,14 +304,22 @@ class ControlHttpHandler(BaseHTTPRequestHandler):
             try:
                 tare = float(body["tare"])
             except (TypeError, ValueError):
-                return self._write_json({"error": "tare must be numeric"}, status=400)
+                try:
+                    return self._write_json({"error": "tare must be numeric"}, status=400)
+                except ConnectionResetError:
+                    LOG.warning("HTTP POST /state aborted: connection reset by peer")
+                    return
             self._sim.set_tare(tare)
             updated["tare"] = tare
         if "pieces" in body:
             try:
                 pieces = int(body["pieces"])
             except (TypeError, ValueError):
-                return self._write_json({"error": "pieces must be integer"}, status=400)
+                try:
+                    return self._write_json({"error": "pieces must be integer"}, status=400)
+                except ConnectionResetError:
+                    LOG.warning("HTTP POST /state aborted: connection reset by peer")
+                    return
             self._sim.set_pcs(pieces)
             updated["pieces"] = pieces
         if "mute" in body:
@@ -290,7 +329,10 @@ class ControlHttpHandler(BaseHTTPRequestHandler):
 
         state = self._sim.snapshot()
         state.update(updated)
-        self._write_json(state, status=200)
+        try:
+            self._write_json(state, status=200)
+        except ConnectionResetError:
+            LOG.warning("HTTP POST /state aborted: connection reset by peer")
 
 
 def run_servers(args):
