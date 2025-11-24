@@ -99,7 +99,7 @@ class MtsicsConnection extends Connection {
         } catch (err) {
             throw err;
         }
-        this._log.debug(`[MtsicsConnection] Raw response on ${address.command} ${payload} is: ${rawResponse}`);
+        this._log.debug(`[MtsicsConnection] Raw response on ${address.command} ${payload?payload:''} is: ${rawResponse}`);
         const parsedResponse = this._parseMtsicsResponse(rawResponse);
         this._log.debug(`[MtsicsConnection] Parsed response on write: ${JSON.stringify(parsedResponse)}`);
         return parsedResponse;
