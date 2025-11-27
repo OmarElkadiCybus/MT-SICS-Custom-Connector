@@ -125,7 +125,7 @@ resources:
       write:
         command: '@'
 
-  # Set the reference piece weight for piece counting mode.
+  # Set the reference piece weight for piece counting.
   # To trigger, send a numeric value (e.g., 2.5) to this endpoint's /set topic.
   # Corresponds to MT-SICS command: PW <value>
   setPieceWeight:
@@ -152,57 +152,41 @@ resources:
   # =================================================
 
   # Subscribe to stable weight, polling every 2 seconds
-  subscribeStableWeight:
-    type: Cybus::Endpoint
-    properties:
-      protocol: Mtsics
-      connection: !ref scaleConnection
-      subscribe:
-        command: 'S'
-        interval: 2000
+  # subscribeStableWeight:
+  #   type: Cybus::Endpoint
+  #   properties:
+  #     protocol: Mtsics
+  #     connection: !ref scaleConnection
+  #     subscribe:
+  #       command: 'S'
+  #       interval: 2000
 
-  # Subscribe to immediate weight on-demand, polling every 2 seconds
-  subscribeImmediateWeight:
-    type: Cybus::Endpoint
-    properties:
-      protocol: Mtsics
-      connection: !ref scaleConnection
-      subscribe:
-        command: 'SI'
-        interval: 2000
+  # # Subscribe to immediate weight on-demand, polling every 2 seconds
+  # subscribeImmediateWeight:
+  #   type: Cybus::Endpoint
+  #   properties:
+  #     protocol: Mtsics
+  #     connection: !ref scaleConnection
+  #     subscribe:
+  #       command: 'SI'
+  #       interval: 2000
 
-  # Subscribe to the current piece count, polling every 5 seconds
-  subscribePieceCount:
-    type: Cybus::Endpoint
-    properties:
-      protocol: Mtsics
-      connection: !ref scaleConnection
-      subscribe:
-        command: 'PCS'
-        interval: 5000
+  # # Subscribe to the current piece count, polling every 5 seconds
+  # subscribePieceCount:
+  #   type: Cybus::Endpoint
+  #   properties:
+  #     protocol: Mtsics
+  #     connection: !ref scaleConnection
+  #     subscribe:
+  #       command: 'PCS'
+  #       interval: 5000
 
-  # Subscribe to the current tare value, polling every 5 seconds
-  subscribeTareValue:
-    type: Cybus::Endpoint
-    properties:
-      protocol: Mtsics
-      connection: !ref scaleConnection
-      subscribe:
-        command: 'TA'
-        interval: 5000
-
-  # ========================================
-  # === Endpoints with Explicit Mode      ===
-  # ========================================
-
-  # Subscribe to piece count, explicitly setting the connector mode to COUNTING.
-  # This can be useful to ensure the connector is in the correct state.
-  subscribePieceCountExplicit:
-    type: Cybus::Endpoint
-    properties:
-      protocol: Mtsics
-      connection: !ref scaleConnection
-      subscribe:
-        command: 'PCS'
-        mode: 'COUNTING'
-        interval: 2000
+  # # Subscribe to the current tare value, polling every 5 seconds
+  # subscribeTareValue:
+  #   type: Cybus::Endpoint
+  #   properties:
+  #     protocol: Mtsics
+  #     connection: !ref scaleConnection
+  #     subscribe:
+  #       command: 'TA'
+  #       interval: 5000

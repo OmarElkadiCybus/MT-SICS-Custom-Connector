@@ -26,8 +26,6 @@ class MtsicsConnection extends Connection {
                 this.connectLost(err.message);
             })
             .on('close', this._onClose.bind(this))
-        
-        this.mode = 'WEIGHING'; // Default mode
     }
 
     // Protocol implementation interface method
@@ -58,11 +56,7 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method (called for READ and SUBSCRIBE Endpoints)
     async handleRead(address, requestData = {}) {
-        this._updateMode(address.command);
-        if (address.mode) {
-            this.mode = address.mode;
-        }
-        this._log.debug(`[MtsicsConnection] read command="${address.command}" mode=${this.mode} timeout=${address.timeout || 'default'}`);
+        this._log.debug(`[MtsicsConnection] read command="${address.command}" timeout=${address.timeout || 'default'}`);
         validateReadCommand(address.command, this._log);
         let rawResponse;
         try {
@@ -85,11 +79,7 @@ class MtsicsConnection extends Connection {
             }
             writeData = undefined;
         }
-        this._updateMode(address.command);
-        if (address.mode) {
-            this.mode = address.mode;
-        }
-        this._log.debug(`[MtsicsConnection] write command="${address.command}" payload=${JSON.stringify(writeData)} mode=${this.mode}`);
+        this._log.debug(`[MtsicsConnection] write command="${address.command}" payload=${JSON.stringify(writeData)}`);
         let payload = this._extractPayload(address.command, writeData);
         payload = this._sanitizePayload(address.command, payload);
         validateWriteCommand(address.command, payload, this._log);
@@ -280,17 +270,6 @@ class MtsicsConnection extends Connection {
         // Fallback for unknown formats
         this._log.warn(`Unhandled MT-SICS response format: ${response}`);
         return { raw: response };
-    }
-
-    _updateMode(command) {
-        const nextMode = (['PCS', 'PW', 'REF'].includes(command)) ? 'COUNTING'
-                         : (['@', 'Z', 'T', 'TA', 'TAC'].includes(command) ? 'WEIGHING' : this.mode);
-
-        if (nextMode !== this.mode) {
-            this._log.info(`[MtsicsConnection] switching mode ${this.mode} -> ${nextMode} due to command ${command}`);
-            this.mode = nextMode;
-        }
-        // Other commands might also affect mode, add as needed
     }
 
     async _createConnection() {

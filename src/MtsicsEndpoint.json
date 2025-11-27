@@ -25,13 +25,6 @@
             "D"
           ]
         },
-        "mode": {
-          "$id": "/properties/mode",
-          "title": "Mode",
-          "type": "string",
-          "description": "Optional: Set the operational mode for this command",
-          "enum": ["WEIGHING", "COUNTING"]
-        },
         "timeout": {
           "type": "integer",
           "title": "Timeout (ms)",
