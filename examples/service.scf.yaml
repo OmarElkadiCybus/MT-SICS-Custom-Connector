@@ -28,6 +28,10 @@ resources:
       connection:
         host: !ref DeviceHost
         port: !ref DevicePort
+        connectionStrategy:
+          initialDelayMs: 1000
+          maxDelayMs: 30000
+          backoffFactor: 1.5
 
   # ========================================
   # === Read Endpoints (One-off requests) ===

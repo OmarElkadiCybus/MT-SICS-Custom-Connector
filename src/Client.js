@@ -5,6 +5,8 @@ class Client extends EventEmitter {
   constructor(params = {}) {
     super()
     this._log = params.log || console;
+    const keepAliveMs = Number(params.keepAliveMs);
+    this._keepAliveMs = Number.isFinite(keepAliveMs) && keepAliveMs >= 0 ? keepAliveMs : 15000;
     this._setupSocket()
     this.commandQueue = []
     this.isProcessing = false
@@ -34,6 +36,13 @@ class Client extends EventEmitter {
       const onConnect = () => {
         cleanup();
         this._log.info(`[Client] connected to ${host}:${port}`)
+        // Use TCP keepalive to surface half-open sockets promptly
+        if (this._keepAliveMs > 0) {
+          this.conn.setKeepAlive(true, this._keepAliveMs);
+        } else {
+          this.conn.setKeepAlive(false);
+        }
+        this.conn.setNoDelay(true);
         resolve()
       };
       timer = setTimeout(() => {
@@ -161,6 +170,10 @@ class Client extends EventEmitter {
       this.buffer = ''
       this._log.info(`[Client] socket closed${hadError ? ' due to error' : ''}`)
       this.emit('close', hadError)
+    })
+    this.conn.on('end', () => {
+      this._log.warn('[Client] remote closed write side (half-close); destroying socket')
+      this.conn.destroy();
     })
     this.conn.on('error', (err) => {
       this._log.error(`[Client] socket error: ${err.message}`)

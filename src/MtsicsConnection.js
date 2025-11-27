@@ -10,6 +10,27 @@ class MtsicsConnection extends Connection {
 
         this._host = params.connection.host
         this._port = params.connection.port
+        const strategy = (params.connection && params.connection.connectionStrategy) || {};
+        this._connectionStrategy = {
+            initialDelayMs: Number.isFinite(Number(strategy.initialDelayMs)) ? Number(strategy.initialDelayMs) : 1000,
+            maxDelayMs: Number.isFinite(Number(strategy.maxDelayMs)) ? Number(strategy.maxDelayMs) : 30000,
+            backoffFactor: Number.isFinite(Number(strategy.backoffFactor)) ? Number(strategy.backoffFactor) : 2,
+        };
+        if (this._connectionStrategy.initialDelayMs < 0) this._connectionStrategy.initialDelayMs = 0;
+        if (this._connectionStrategy.maxDelayMs < this._connectionStrategy.initialDelayMs) {
+            this._connectionStrategy.maxDelayMs = this._connectionStrategy.initialDelayMs;
+        }
+        if (this._connectionStrategy.backoffFactor < 1) this._connectionStrategy.backoffFactor = 1;
+        this._currentDelay = this._connectionStrategy.initialDelayMs;
+        this._reconnectTimer = null;
+        this._shouldReconnect = true;
+        this._suppressReconnectOnce = false;
+        this._isReconnecting = false;
+        this._dropInProgress = false;
+
+        const keepAliveMsEnv = Number(process.env.TCP_KEEPALIVE_MS);
+        this._keepAliveMs = Number.isFinite(keepAliveMsEnv) && keepAliveMsEnv >= 0 ? keepAliveMsEnv : 15000;
+
         const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
         this._log = params.log || {
             info: (...args) => console.info('[INFO]', ...args),
@@ -29,24 +50,40 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method
     async handleConnect() {
+        this._shouldReconnect = true;
+        this._dropInProgress = false;
+        this._resetBackoff();
         this._log.info(`[MtsicsConnection] connecting to ${this._host}:${this._port}`);
-        await this._createConnection();
-        this._log.info('[MtsicsConnection] connection established');
+        const connected = await this._createConnection();
+        if (connected) {
+            this._log.info('[MtsicsConnection] connection established');
+            return;
+        }
+        this._backoffAndSchedule('connect failed');
     }
 
     // Protocol implementation interface method
     async handleReconnect() {
         this._log.warn('[MtsicsConnection] reconnect requested');
-        await this._closeConnection()
+        this._shouldReconnect = true;
+        this._dropInProgress = false;
+        this._resetBackoff();
+        await this._closeConnection({ suppressReconnect: true })
         this._client = this._createClient()
-        await this._createConnection()
-        this._log.info('[MtsicsConnection] reconnected');
+        const connected = await this._createConnection()
+        if (connected) {
+            this._log.info('[MtsicsConnection] reconnected');
+            return;
+        }
+        this._backoffAndSchedule('reconnect failed');
     }
 
     // Protocol implementation interface method
     async handleDisconnect() {
         this._log.info('[MtsicsConnection] disconnect requested');
-        await this._closeConnection()
+        this._shouldReconnect = false;
+        this._dropInProgress = false;
+        await this._closeConnection({ suppressReconnect: true })
     }
 
     // Protocol implementation interface method (called for READ and SUBSCRIBE Endpoints)
@@ -276,24 +313,35 @@ class MtsicsConnection extends Connection {
             await this._client.connect(this._host, this._port, connectTimeout)
         } catch (err) {
             this._log.error(`[MtsicsConnection] connect error: ${err.message}`);
-            switch (this.getState()) {
-                case 'connecting':
-                    this.connectFailed(err.message)
-                    break
-                case 'reconnecting':
-                    this.reconnectFailed(err.message)
-                    break
-                default:
-                   this._log.error(`MtsicsConnection:_createConnection error in state ${this.getState()}: ${err.message}`);
-                   this.connectLost(err.message);
-            }
-            return
+            this._handleConnectionError(err);
+            return false;
         }
 
         this.connectDone()
+        return true;
     }
 
-    async _closeConnection() {
+    _handleConnectionError(err) {
+        const state = this.getState && this.getState();
+        switch (state) {
+            case 'connecting':
+                this.connectFailed(err.message);
+                break;
+            case 'reconnecting':
+                this.reconnectFailed(err.message);
+                break;
+            default:
+                this._log.error(`MtsicsConnection:_createConnection error in state ${state}: ${err.message}`);
+                this.connectLost(err.message);
+        }
+    }
+
+    async _closeConnection(options = {}) {
+        const { suppressReconnect = false } = options;
+        if (suppressReconnect) {
+            this._suppressReconnectOnce = true;
+        }
+        this._clearReconnectTimer();
         if (this._client) {
             this._client.end()
         }
@@ -303,11 +351,35 @@ class MtsicsConnection extends Connection {
         }
     }
 
-    _onClose() {
-        if (this.getState() === 'connected') {
-            this._log.warn('[MtsicsConnection] socket closed unexpectedly; marking connection lost');
-            this.connectLost()
+    _onClose(hadError) {
+        const state = this.getState && this.getState();
+        const suppressed = this._suppressReconnectOnce;
+        this._suppressReconnectOnce = false;
+
+        if (suppressed) {
+            this._log.debug('[MtsicsConnection] socket closed intentionally; reconnect suppressed');
+            this._dropInProgress = false;
+            return;
         }
+
+        if (!this._shouldReconnect || state === 'disconnecting' || state === 'disconnected') {
+            this._log.info(`[MtsicsConnection] socket closed (${state}); reconnect disabled`);
+            this._dropInProgress = false;
+            return;
+        }
+
+        if (this._dropInProgress) {
+            this._log.debug('[MtsicsConnection] socket close already handled; skipping duplicate reconnect scheduling');
+            return;
+        }
+
+        const reason = hadError ? 'socket closed due to error' : 'socket closed';
+        this._log.warn(`[MtsicsConnection] ${reason}; marking connection lost (state=${state})`);
+        this._dropInProgress = true;
+        if (this.connectLost) {
+            this.connectLost(reason);
+        }
+        this._backoffAndSchedule(reason);
     }
 
     _sanitizePayload(command, payload) {
@@ -355,14 +427,118 @@ class MtsicsConnection extends Connection {
     }
 
     _createClient() {
-        const client = new Client({ log: this._log })
+        const client = new Client({ log: this._log, keepAliveMs: this._keepAliveMs })
         client
             .on('error', err => {
-                this._log.error(`[MtsicsConnection] client error: ${err.message}`);
-                this.connectLost(err.message);
+                this._handleClientError(err);
             })
             .on('close', this._onClose.bind(this))
         return client;
+    }
+
+    _handleClientError(err) {
+        if (this._suppressReconnectOnce) {
+            this._log.debug(`[MtsicsConnection] client error during planned shutdown: ${err.message}`);
+            return;
+        }
+        if (!this._shouldReconnect) {
+            this._log.warn(`[MtsicsConnection] client error with reconnect disabled: ${err.message}`);
+            return;
+        }
+        if (this._dropInProgress) {
+            this._log.debug(`[MtsicsConnection] client error already handled: ${err.message}`);
+            return;
+        }
+        this._dropInProgress = true;
+        this._log.error(`[MtsicsConnection] client error: ${err.message}`);
+        if (this.connectLost) {
+            this.connectLost(err.message);
+        }
+        this._backoffAndSchedule(err.message);
+    }
+
+    _scheduleReconnect(reason, delayOverride) {
+        if (this._reconnectTimer) {
+            this._log.debug('[MtsicsConnection] reconnect already scheduled; skipping');
+            return false;
+        }
+        if (!this._shouldReconnect) {
+            this._log.debug('[MtsicsConnection] reconnect disabled; not scheduling');
+            return false;
+        }
+        const state = this.getState && this.getState();
+        if (state === 'disconnecting' || state === 'disconnected') {
+            this._log.debug(`[MtsicsConnection] not scheduling reconnect while ${state}`);
+            return false;
+        }
+        if (this._isReconnecting) {
+            this._log.debug('[MtsicsConnection] reconnect attempt already running; not scheduling timer');
+            return false;
+        }
+        const delay = typeof delayOverride === 'number' ? delayOverride : this._currentDelay;
+        this._log.warn(`[MtsicsConnection] scheduling reconnect in ${delay}ms${reason ? ` (${reason})` : ''}`);
+        this._reconnectTimer = setTimeout(async () => {
+            this._reconnectTimer = null;
+            await this._attemptReconnect();
+        }, delay);
+        return true;
+    }
+
+    async _attemptReconnect() {
+        const state = this.getState && this.getState();
+        if (!this._shouldReconnect) {
+            this._log.debug('[MtsicsConnection] reconnect skipped (disabled)');
+            return;
+        }
+        if (state === 'disconnected' || state === 'disconnecting') {
+            this._log.debug(`[MtsicsConnection] reconnect skipped in state ${state}`);
+            return;
+        }
+        if (this._isReconnecting) {
+            this._log.debug('[MtsicsConnection] reconnect already in progress');
+            return;
+        }
+
+        this._isReconnecting = true;
+        this._dropInProgress = false;
+
+        try {
+            await this._closeConnection({ suppressReconnect: true });
+            this._client = this._createClient();
+            const connected = await this._createConnection();
+            if (connected && this.getState && this.getState() === 'connected') {
+                this._resetBackoff();
+            } else {
+                this._backoffAndSchedule('reconnect attempt failed');
+            }
+        } finally {
+            this._isReconnecting = false;
+        }
+    }
+
+    _resetBackoff() {
+        this._clearReconnectTimer();
+        this._currentDelay = this._connectionStrategy.initialDelayMs;
+        this._dropInProgress = false;
+    }
+
+    _backoffAndSchedule(reason) {
+        const scheduled = this._scheduleReconnect(reason, this._currentDelay);
+        if (scheduled) {
+            this._increaseBackoff();
+        }
+    }
+
+    _increaseBackoff() {
+        const nextDelay = this._currentDelay * this._connectionStrategy.backoffFactor;
+        this._currentDelay = Math.min(this._connectionStrategy.maxDelayMs, Math.max(this._connectionStrategy.initialDelayMs, Math.floor(nextDelay)));
+    }
+
+    _clearReconnectTimer() {
+        if (this._reconnectTimer) {
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = null;
+        }
     }
 }
 
