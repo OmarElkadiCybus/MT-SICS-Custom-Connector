@@ -10,6 +10,7 @@ class MtsicsConnection extends Connection {
 
         this._host = params.connection.host
         this._port = params.connection.port
+        this._label = `${this._host}:${this._port}`;
         const strategy = (params.connection && params.connection.connectionStrategy) || {};
         this._connectionStrategy = {
             initialDelayMs: Number.isFinite(Number(strategy.initialDelayMs)) ? Number(strategy.initialDelayMs) : 1000,
@@ -27,6 +28,7 @@ class MtsicsConnection extends Connection {
         this._suppressReconnectOnce = false;
         this._isReconnecting = false;
         this._dropInProgress = false;
+        this._connectAttempts = 0;
 
         const keepAliveMsEnv = Number(process.env.TCP_KEEPALIVE_MS);
         this._keepAliveMs = Number.isFinite(keepAliveMsEnv) && keepAliveMsEnv >= 0 ? keepAliveMsEnv : 15000;
@@ -53,7 +55,7 @@ class MtsicsConnection extends Connection {
         this._shouldReconnect = true;
         this._dropInProgress = false;
         this._resetBackoff();
-        this._log.info(`[MtsicsConnection] connecting to ${this._host}:${this._port}`);
+        this._log.info(`[MtsicsConnection] connecting to ${this._label} (initialDelay=${this._connectionStrategy.initialDelayMs}ms maxDelay=${this._connectionStrategy.maxDelayMs}ms factor=${this._connectionStrategy.backoffFactor})`);
         const connected = await this._createConnection();
         if (connected) {
             this._log.info('[MtsicsConnection] connection established');
@@ -64,7 +66,7 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method
     async handleReconnect() {
-        this._log.warn('[MtsicsConnection] reconnect requested');
+        this._log.warn(`[MtsicsConnection] reconnect requested for ${this._label}`);
         this._shouldReconnect = true;
         this._dropInProgress = false;
         this._resetBackoff();
@@ -80,7 +82,7 @@ class MtsicsConnection extends Connection {
 
     // Protocol implementation interface method
     async handleDisconnect() {
-        this._log.info('[MtsicsConnection] disconnect requested');
+        this._log.info(`[MtsicsConnection] disconnect requested for ${this._label}`);
         this._shouldReconnect = false;
         this._dropInProgress = false;
         await this._closeConnection({ suppressReconnect: true })
@@ -309,16 +311,38 @@ class MtsicsConnection extends Connection {
             this._client = this._createClient()
         }
         const connectTimeout = Number(process.env.CONNECT_TIMEOUT_MS) || 3000;
+        const attempt = ++this._connectAttempts;
+        const state = this.getState && this.getState();
+        this._log.info(`[MtsicsConnection] opening socket to ${this._label} (attempt=${attempt}, state=${state}, timeout=${connectTimeout}ms)`);
         try {
             await this._client.connect(this._host, this._port, connectTimeout)
         } catch (err) {
-            this._log.error(`[MtsicsConnection] connect error: ${err.message}`);
+            const hint = this._formatConnectError(err);
+            this._log.error(`[MtsicsConnection] connect error on ${this._label} (attempt=${attempt}): ${err.message}${hint ? ` - ${hint}` : ''}`);
             this._handleConnectionError(err);
             return false;
         }
 
+        this._log.info(`[MtsicsConnection] connected to ${this._label} (attempt=${attempt})`);
         this.connectDone()
         return true;
+    }
+
+    _formatConnectError(err) {
+        switch (err && err.code) {
+            case 'ECONNREFUSED':
+                return 'scale refused TCP; device offline/booting or port incorrect';
+            case 'ETIMEDOUT':
+                return 'connect timed out; check network/firewall or device power';
+            case 'EHOSTUNREACH':
+            case 'ENETUNREACH':
+                return 'host unreachable on network; verify routing/VLAN';
+            case 'ENOTFOUND':
+            case 'EAI_AGAIN':
+                return 'DNS lookup failed; verify hostname';
+            default:
+                return '';
+        }
     }
 
     _handleConnectionError(err) {
@@ -331,7 +355,7 @@ class MtsicsConnection extends Connection {
                 this.reconnectFailed(err.message);
                 break;
             default:
-                this._log.error(`MtsicsConnection:_createConnection error in state ${state}: ${err.message}`);
+                this._log.error(`MtsicsConnection:_createConnection error on ${this._label} in state ${state}: ${err.message}`);
                 this.connectLost(err.message);
         }
     }
@@ -357,13 +381,13 @@ class MtsicsConnection extends Connection {
         this._suppressReconnectOnce = false;
 
         if (suppressed) {
-            this._log.debug('[MtsicsConnection] socket closed intentionally; reconnect suppressed');
+            this._log.debug(`[MtsicsConnection] socket closed intentionally for ${this._label}; reconnect suppressed`);
             this._dropInProgress = false;
             return;
         }
 
         if (!this._shouldReconnect || state === 'disconnecting' || state === 'disconnected') {
-            this._log.info(`[MtsicsConnection] socket closed (${state}); reconnect disabled`);
+            this._log.info(`[MtsicsConnection] socket closed on ${this._label} (${state}); reconnect disabled`);
             this._dropInProgress = false;
             return;
         }
@@ -374,7 +398,7 @@ class MtsicsConnection extends Connection {
         }
 
         const reason = hadError ? 'socket closed due to error' : 'socket closed';
-        this._log.warn(`[MtsicsConnection] ${reason}; marking connection lost (state=${state})`);
+        this._log.warn(`[MtsicsConnection] ${reason} on ${this._label}; marking connection lost (state=${state})`);
         this._dropInProgress = true;
         if (this.connectLost) {
             this.connectLost(reason);
@@ -427,7 +451,7 @@ class MtsicsConnection extends Connection {
     }
 
     _createClient() {
-        const client = new Client({ log: this._log, keepAliveMs: this._keepAliveMs })
+        const client = new Client({ log: this._log, keepAliveMs: this._keepAliveMs, label: this._label })
         client
             .on('error', err => {
                 this._handleClientError(err);
@@ -438,19 +462,19 @@ class MtsicsConnection extends Connection {
 
     _handleClientError(err) {
         if (this._suppressReconnectOnce) {
-            this._log.debug(`[MtsicsConnection] client error during planned shutdown: ${err.message}`);
+            this._log.debug(`[MtsicsConnection] client error during planned shutdown on ${this._label}: ${err.message}`);
             return;
         }
         if (!this._shouldReconnect) {
-            this._log.warn(`[MtsicsConnection] client error with reconnect disabled: ${err.message}`);
+            this._log.warn(`[MtsicsConnection] client error with reconnect disabled on ${this._label}: ${err.message}`);
             return;
         }
         if (this._dropInProgress) {
-            this._log.debug(`[MtsicsConnection] client error already handled: ${err.message}`);
+            this._log.debug(`[MtsicsConnection] client error already handled on ${this._label}: ${err.message}`);
             return;
         }
         this._dropInProgress = true;
-        this._log.error(`[MtsicsConnection] client error: ${err.message}`);
+        this._log.error(`[MtsicsConnection] client error on ${this._label}: ${err.message}`);
         if (this.connectLost) {
             this.connectLost(err.message);
         }
@@ -459,24 +483,20 @@ class MtsicsConnection extends Connection {
 
     _scheduleReconnect(reason, delayOverride) {
         if (this._reconnectTimer) {
-            this._log.debug('[MtsicsConnection] reconnect already scheduled; skipping');
+            this._log.debug(`[MtsicsConnection] reconnect already scheduled for ${this._label}; skipping`);
             return false;
         }
         if (!this._shouldReconnect) {
-            this._log.debug('[MtsicsConnection] reconnect disabled; not scheduling');
+            this._log.debug(`[MtsicsConnection] reconnect disabled for ${this._label}; not scheduling`);
             return false;
         }
         const state = this.getState && this.getState();
         if (state === 'disconnecting' || state === 'disconnected') {
-            this._log.debug(`[MtsicsConnection] not scheduling reconnect while ${state}`);
-            return false;
-        }
-        if (this._isReconnecting) {
-            this._log.debug('[MtsicsConnection] reconnect attempt already running; not scheduling timer');
+            this._log.debug(`[MtsicsConnection] not scheduling reconnect for ${this._label} while ${state}`);
             return false;
         }
         const delay = typeof delayOverride === 'number' ? delayOverride : this._currentDelay;
-        this._log.warn(`[MtsicsConnection] scheduling reconnect in ${delay}ms${reason ? ` (${reason})` : ''}`);
+        this._log.warn(`[MtsicsConnection] scheduling reconnect to ${this._label} in ${delay}ms${reason ? ` (${reason})` : ''}`);
         this._reconnectTimer = setTimeout(async () => {
             this._reconnectTimer = null;
             await this._attemptReconnect();
@@ -503,6 +523,7 @@ class MtsicsConnection extends Connection {
         this._dropInProgress = false;
 
         try {
+            this._log.info(`[MtsicsConnection] reconnecting to ${this._label}`);
             await this._closeConnection({ suppressReconnect: true });
             this._client = this._createClient();
             const connected = await this._createConnection();
@@ -520,12 +541,14 @@ class MtsicsConnection extends Connection {
         this._clearReconnectTimer();
         this._currentDelay = this._connectionStrategy.initialDelayMs;
         this._dropInProgress = false;
+        this._connectAttempts = 0;
     }
 
     _backoffAndSchedule(reason) {
         const scheduled = this._scheduleReconnect(reason, this._currentDelay);
         if (scheduled) {
             this._increaseBackoff();
+            this._log.debug(`[MtsicsConnection] next reconnect backoff for ${this._label} set to ${this._currentDelay}ms`);
         }
     }
 
