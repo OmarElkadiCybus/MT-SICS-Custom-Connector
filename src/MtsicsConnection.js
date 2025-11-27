@@ -11,7 +11,7 @@ class MtsicsConnection extends Connection {
         this._host = params.connection.host
         this._port = params.connection.port
         const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
-        this._log = {
+        this._log = params.log || {
             info: (...args) => console.info('[INFO]', ...args),
             warn: (...args) => console.warn('[WARN]', ...args),
             error: (...args) => console.error('[ERROR]', ...args),
@@ -19,13 +19,7 @@ class MtsicsConnection extends Connection {
             level: LOG_LEVEL,
         };
 
-        this._client = new Client({ log: this._log })
-        this._client
-            .on('error', err => {
-                this._log.error(`[MtsicsConnection] client error: ${err.message}`);
-                this.connectLost(err.message);
-            })
-            .on('close', this._onClose.bind(this))
+        this._client = this._createClient()
     }
 
     // Protocol implementation interface method
@@ -44,6 +38,7 @@ class MtsicsConnection extends Connection {
     async handleReconnect() {
         this._log.warn('[MtsicsConnection] reconnect requested');
         await this._closeConnection()
+        this._client = this._createClient()
         await this._createConnection()
         this._log.info('[MtsicsConnection] reconnected');
     }
@@ -273,8 +268,12 @@ class MtsicsConnection extends Connection {
     }
 
     async _createConnection() {
+        if (!this._client) {
+            this._client = this._createClient()
+        }
+        const connectTimeout = Number(process.env.CONNECT_TIMEOUT_MS) || 3000;
         try {
-            await this._client.connect(this._host, this._port)
+            await this._client.connect(this._host, this._port, connectTimeout)
         } catch (err) {
             this._log.error(`[MtsicsConnection] connect error: ${err.message}`);
             switch (this.getState()) {
@@ -295,7 +294,9 @@ class MtsicsConnection extends Connection {
     }
 
     async _closeConnection() {
-        this._client.end()
+        if (this._client) {
+            this._client.end()
+        }
 
         if (this.getState() === 'disconnecting') {
             this.disconnectDone()
@@ -351,6 +352,17 @@ class MtsicsConnection extends Connection {
         }
         this._log.debug(`[MtsicsConnection] Extracted payload for the command ${command} is: ${payload}`);
         return payload;
+    }
+
+    _createClient() {
+        const client = new Client({ log: this._log })
+        client
+            .on('error', err => {
+                this._log.error(`[MtsicsConnection] client error: ${err.message}`);
+                this.connectLost(err.message);
+            })
+            .on('close', this._onClose.bind(this))
+        return client;
     }
 }
 
