@@ -56,6 +56,11 @@ Endpoint shapes:
 - `write`: send command/payload; trigger via `/set`.
 - `subscribe`: periodic fetch; uses `connection.pollingInterval` or endpoint `interval`.
 
+### Command queueing and timeouts
+- Commands are processed one at a time: a new command is sent only after the previous one returns or times out.
+- Each command uses its own `timeout` (endpoint override or default); on timeout the socket is closed and the reconnect/backoff logic runs.
+- After TCP connect, the connector sends `connectValidationCommand` once; failure closes and retries the socket.
+
 ## 4. Commands
 Use these in `read/subscribe` or `write` blocks.
 
