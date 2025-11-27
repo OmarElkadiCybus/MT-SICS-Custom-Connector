@@ -29,7 +29,14 @@ Key fields from `MtsicsConnection.json`:
 | `eol` | Line ending per command | `\r\n` |
 | `encoding` | Payload charset | `ascii` |
 | `connectionStrategy` | Reconnect backoff (`initialDelayMs`, `maxDelayMs`, `backoffFactor`) | `{1000, 30000, 2}` |
-| `pollingInterval` | Default cron-style poll | `*/5 * * * * *` (5s) |
+
+Reconnect behavior: if the scale is unreachable or mid-boot, the connector fails the TCP handshake after `CONNECT_TIMEOUT_MS`, rebuilds the socket, and retries using the `connectionStrategy` backoff. No manual toggle needed after a power cycle. Half-open sockets are torn down via keepalive so retries can resume.
+
+Practical tuning:
+- `connectionStrategy.initialDelayMs`: first retry delay; set higher if the scale needs a long boot.
+- `connectionStrategy.maxDelayMs`: cap for exponential backoff; keep it below your operational SLA.
+- `CONNECT_TIMEOUT_MS`: shorter helps fail fast when unplugged; longer helps during device boot.
+- `TCP_KEEPALIVE_MS`: leave at default; lower it only if you see stalled connections with no data/FINs.
 
 ## 3. Endpoints
 Common fields:
@@ -61,7 +68,7 @@ Use these in `read/subscribe` or `write` blocks.
 | `D` | Write | `string` or `{"value":"string"}` | Show text on display (write-only) |
 | `@` | Read/Write | — | Serial + reset |
 
-### Hint: For Commands require no payload, any given payload will be discarded
+### Hint: For commands that require no payload, any given payload will be discarded
 
 ## 5. Response Shapes (all include `raw`)
 ```json
@@ -79,7 +86,19 @@ Use these in `read/subscribe` or `write` blocks.
 {"success":true,"command":"Z","status":"OK","raw":"Z A"}
 ```
 
-## 6. Snippet Gallery
+## 6. Environment Variables
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `LOG_LEVEL` | Connector log verbosity (`debug`, `info`, `warn`, `error`) | `info` |
+| `CONNECT_TIMEOUT_MS` | Max time to complete the TCP handshake before retrying | `3000` |
+| `TCP_KEEPALIVE_MS` | TCP keepalive interval to surface half-open sockets (set `0` to disable) | `15000` |
+| `CYBUS_MQTT_HOST` / `CYBUS_MQTT_PORT` | MQTT broker address/port for the agent | `localhost` / `1883` |
+| `CYBUS_AGENT_NAME` | Agent identifier used by Connectware | `MtsicsAgent` |
+| `CYBUS_LOG_LEVEL` | Connectware agent logging (separate from connector logs) | `debug` |
+
+Tip: shorten `CONNECT_TIMEOUT_MS` if the scale drops off the network quickly; increase it if the device needs longer to accept TCP connections after power-up. Leave `TCP_KEEPALIVE_MS` at the default unless you need faster teardown of half-open sockets so the backoff strategy can reconnect.
+
+## 7. Snippet Gallery
 Read stable weight:
 ```yaml
 readStableWeight:
@@ -121,3 +140,10 @@ subscribeImmediateWeight:
       command: 'SI'
       interval: 2000
 ```
+
+## 8. Operational Tips
+- MQTT topics: `/get` triggers reads, `/set` triggers writes; payload must follow the command’s format rules above.
+- Timeouts: each endpoint can override `timeout`; if the scale is silent, the connector drops and reconnects using backoff.
+- Logging: set `LOG_LEVEL=debug` when troubleshooting (queueing, reconnect attempts, payload sanitization).
+- Many endpoints: the agent raises its listener cap; no action needed for >10 endpoints on one connection.
+- Simulator: `docker compose -f docker-compose.simulator.yaml up -d`; POST `{"weight":150,"stable":true}` to `http://localhost:8081/state` to drive responses or `{"mute":true}` to test timeouts.
