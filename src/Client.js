@@ -10,6 +10,7 @@ class Client extends EventEmitter {
     this._keepAliveMs = Number.isFinite(keepAliveMs) && keepAliveMs >= 0 ? keepAliveMs : 15000;
     this._setupSocket()
     this._connecting = false
+    this._emittedCloseFromEnd = false
     this.commandQueue = []
     this.isProcessing = false
     this.responseCallback = null
@@ -173,10 +174,18 @@ class Client extends EventEmitter {
       this.commandQueue = []
       this.buffer = ''
       this._log.info(`[Client ${this._label}] socket closed${hadError ? ' due to error' : ''}`)
+      if (this._emittedCloseFromEnd) {
+        // Already propagated via 'end' handler
+        this._emittedCloseFromEnd = false;
+        return;
+      }
       this.emit('close', hadError)
     })
     this.conn.on('end', () => {
       this._log.warn(`[Client ${this._label}] remote closed write side (half-close); destroying socket`)
+      // Force upstream handling immediately to avoid stalls on half-open sockets
+      this._emittedCloseFromEnd = true;
+      this.emit('close', true);
       this.conn.destroy();
     })
     this.conn.on('error', (err) => {

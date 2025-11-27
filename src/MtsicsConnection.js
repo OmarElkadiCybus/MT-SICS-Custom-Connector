@@ -11,6 +11,7 @@ class MtsicsConnection extends Connection {
         this._host = params.connection.host
         this._port = params.connection.port
         this._label = `${this._host}:${this._port}`;
+        const connCfg = params.connection || {};
         const strategy = (params.connection && params.connection.connectionStrategy) || {};
         this._connectionStrategy = {
             initialDelayMs: Number.isFinite(Number(strategy.initialDelayMs)) ? Number(strategy.initialDelayMs) : 1000,
@@ -30,15 +31,37 @@ class MtsicsConnection extends Connection {
         this._dropInProgress = false;
         this._connectAttempts = 0;
 
+        const keepAliveMsParam = Number(connCfg.tcpKeepaliveMs ?? connCfg.keepAliveMs);
         const keepAliveMsEnv = Number(process.env.TCP_KEEPALIVE_MS);
-        this._keepAliveMs = Number.isFinite(keepAliveMsEnv) && keepAliveMsEnv >= 0 ? keepAliveMsEnv : 15000;
+        this._keepAliveMs = Number.isFinite(keepAliveMsParam) && keepAliveMsParam >= 0
+            ? keepAliveMsParam
+            : (Number.isFinite(keepAliveMsEnv) && keepAliveMsEnv >= 0 ? keepAliveMsEnv : 15000);
+
+        const connectTimeoutParam = Number(connCfg.connectTimeoutMs);
+        const connectTimeoutEnv = Number(process.env.CONNECT_TIMEOUT_MS);
+        this._connectTimeoutMs = Number.isFinite(connectTimeoutParam) && connectTimeoutParam > 0
+            ? connectTimeoutParam
+            : (Number.isFinite(connectTimeoutEnv) && connectTimeoutEnv > 0 ? connectTimeoutEnv : 3000);
+
+        const validationCommandParam = connCfg.connectValidationCommand;
+        this._validationCommand = typeof validationCommandParam === 'string' && validationCommandParam.length > 0
+            ? validationCommandParam
+            : (process.env.CONNECT_VALIDATION_COMMAND || 'S');
+
+        const validationTimeoutParam = Number(connCfg.connectValidationTimeoutMs);
+        const validationTimeoutEnv = Number(process.env.CONNECT_VALIDATION_TIMEOUT_MS);
+        this._validationTimeoutMs = Number.isFinite(validationTimeoutParam) && validationTimeoutParam > 0
+            ? validationTimeoutParam
+            : (Number.isFinite(validationTimeoutEnv) && validationTimeoutEnv > 0 ? validationTimeoutEnv : this._connectTimeoutMs);
+        this._validationInProgress = false;
 
         const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+        const ts = () => new Date().toISOString();
         this._log = params.log || {
-            info: (...args) => console.info('[INFO]', ...args),
-            warn: (...args) => console.warn('[WARN]', ...args),
-            error: (...args) => console.error('[ERROR]', ...args),
-            debug: (LOG_LEVEL === 'debug') ? (...args) => console.log('[DEBUG]', ...args) : () => {},
+            info: (...args) => console.info(ts(), '[INFO]', ...args),
+            warn: (...args) => console.warn(ts(), '[WARN]', ...args),
+            error: (...args) => console.error(ts(), '[ERROR]', ...args),
+            debug: (LOG_LEVEL === 'debug') ? (...args) => console.log(ts(), '[DEBUG]', ...args) : () => {},
             level: LOG_LEVEL,
         };
 
@@ -310,7 +333,7 @@ class MtsicsConnection extends Connection {
         if (!this._client) {
             this._client = this._createClient()
         }
-        const connectTimeout = Number(process.env.CONNECT_TIMEOUT_MS) || 3000;
+        const connectTimeout = this._connectTimeoutMs;
         const attempt = ++this._connectAttempts;
         const state = this.getState && this.getState();
         this._log.info(`[MtsicsConnection] opening socket to ${this._label} (attempt=${attempt}, state=${state}, timeout=${connectTimeout}ms)`);
@@ -323,6 +346,15 @@ class MtsicsConnection extends Connection {
             return false;
         }
 
+        if (!(await this._validateConnection())) {
+            this._log.warn(`[MtsicsConnection] validation failed on ${this._label}; closing and retrying`);
+            await this._closeConnection({ suppressReconnect: true });
+            this._handleConnectionError(new Error('Validation failed'));
+            return false;
+        }
+
+        this._suppressReconnectOnce = false;
+        this._dropInProgress = false;
         this._log.info(`[MtsicsConnection] connected to ${this._label} (attempt=${attempt})`);
         this.connectDone()
         return true;
@@ -451,7 +483,11 @@ class MtsicsConnection extends Connection {
     }
 
     _createClient() {
-        const client = new Client({ log: this._log, keepAliveMs: this._keepAliveMs, label: this._label })
+        const client = new Client({
+            log: this._log,
+            keepAliveMs: this._keepAliveMs,
+            label: this._label,
+        })
         client
             .on('error', err => {
                 this._handleClientError(err);
@@ -461,6 +497,10 @@ class MtsicsConnection extends Connection {
     }
 
     _handleClientError(err) {
+        if (this._validationInProgress) {
+            this._log.debug(`[MtsicsConnection] client error during validation on ${this._label}: ${err.message}`);
+            return;
+        }
         if (this._suppressReconnectOnce) {
             this._log.debug(`[MtsicsConnection] client error during planned shutdown on ${this._label}: ${err.message}`);
             return;
@@ -542,6 +582,7 @@ class MtsicsConnection extends Connection {
         this._currentDelay = this._connectionStrategy.initialDelayMs;
         this._dropInProgress = false;
         this._connectAttempts = 0;
+        this._suppressReconnectOnce = false;
     }
 
     _backoffAndSchedule(reason) {
@@ -562,6 +603,37 @@ class MtsicsConnection extends Connection {
             clearTimeout(this._reconnectTimer);
             this._reconnectTimer = null;
         }
+    }
+
+    async _validateConnection() {
+        const cmd = (this._validationCommand || '').trim();
+        if (!cmd || cmd.toLowerCase() === 'none' || cmd.toLowerCase() === 'false') {
+            return true;
+        }
+        this._validationInProgress = true;
+        try {
+            this._log.debug(`[MtsicsConnection] validating connection on ${this._label} with ${cmd} (timeout=${this._validationTimeoutMs}ms)`);
+            await this._client.read(cmd, this._validationTimeoutMs);
+            this._log.info(`[MtsicsConnection] validation succeeded on ${this._label}`);
+            return true;
+        } catch (err) {
+            this._log.warn(`[MtsicsConnection] validation failed on ${this._label}: ${err.message}`);
+            return false;
+        } finally {
+            this._validationInProgress = false;
+        }
+    }
+
+    _startHeartbeat() {
+    }
+
+    _stopHeartbeat() {
+    }
+
+    _scheduleHeartbeat() {
+    }
+
+    async _sendHeartbeat() {
     }
 }
 

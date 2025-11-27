@@ -32,6 +32,10 @@ resources:
           initialDelayMs: 1000
           maxDelayMs: 30000
           backoffFactor: 1.5
+        connectTimeoutMs: 3000
+        connectValidationCommand: "S"   # set to "none" to disable validation
+        connectValidationTimeoutMs: 3000
+        tcpKeepaliveMs: 15000
 
   # ========================================
   # === Read Endpoints (One-off requests) ===
@@ -185,12 +189,12 @@ resources:
   #       command: 'PCS'
   #       interval: 5000
 
-  # # Subscribe to the current tare value, polling every 5 seconds
-  # subscribeTareValue:
-  #   type: Cybus::Endpoint
-  #   properties:
-  #     protocol: Mtsics
-  #     connection: !ref scaleConnection
-  #     subscribe:
-  #       command: 'TA'
-  #       interval: 5000
+  # Subscribe to the current tare value, polling every 5 seconds
+  subscribeTareValue:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Mtsics
+      connection: !ref scaleConnection
+      subscribe:
+        command: 'TA'
+        interval: 2000

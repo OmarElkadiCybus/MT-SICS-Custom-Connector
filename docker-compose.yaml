@@ -5,14 +5,15 @@ services:
     volumes:
       - agentData:/data
     environment:
-      LOG_LEVEL: info
+      LOG_LEVEL: debug
       CYBUS_MQTT_HOST: localhost
       CYBUS_MQTT_PORT: 1883
       CYBUS_AGENT_MODE: distributed
       CYBUS_AGENT_NAME: MtsicsAgent
-      CYBUS_LOG_LEVEL: debug
       CYBUS_HOSTNAME_INGRESS: localhost
       CYBUS_USE_MUTUAL_TLS: false
       CYBUS_TRUST_ALL_CERTS: true
+      CONNECT_TIMEOUT_MS: 2000
+      TCP_KEEPALIVE_MS: 15000
 volumes:
   agentData:

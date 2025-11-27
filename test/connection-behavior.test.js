@@ -50,6 +50,8 @@ class TestConnection extends MtsicsConnection {
         super(params);
         // _createClient will have initialized _sharedState
         this._scheduledDelays = [];
+        this._validationCommand = ''; // disable validation for fake client
+        this._heartbeatIntervalMs = 0; // disable heartbeat in unit tests
     }
 
     _createClient() {
@@ -70,12 +72,14 @@ class TestConnection extends MtsicsConnection {
         return super._scheduleReconnect(reason, delayOverride);
     }
 
-    queueFailures(count, message = 'connect failed') {
+    queueFailures(count, message = 'connect failed', code) {
         if (!this._sharedState) {
             this._sharedState = { failures: [], clients: [] };
         }
         for (let i = 0; i < count; i += 1) {
-            this._sharedState.failures.push(new Error(message));
+            const err = new Error(message);
+            if (code) err.code = code;
+            this._sharedState.failures.push(err);
         }
     }
 
@@ -88,6 +92,11 @@ class TestConnection extends MtsicsConnection {
     totalConnectAttempts() {
         if (!this._sharedState) return 0;
         return this._sharedState.clients.reduce((sum, client) => sum + client.connectCalls, 0);
+    }
+
+    clientsCreatedCount() {
+        if (!this._sharedState) return 0;
+        return this._sharedState.clients.length;
     }
 
     activeClient() {
@@ -205,5 +214,49 @@ describe('MtsicsConnection connection strategy and edge cases', function () {
 
         await waitFor(() => connection.getState() === 'connected', 500);
         expect(connection._reconnectTimer).to.equal(null);
+    });
+
+    it('clears suppress flag after a successful reconnect so future closes reschedule', async () => {
+        connection = new TestConnection({
+            connection: {
+                host: 'localhost',
+                port: 0,
+                connectionStrategy: { initialDelayMs: 5, maxDelayMs: 20, backoffFactor: 2 },
+            },
+            log: silentLog,
+        });
+
+        await connection.handleConnect();
+        // Trigger an intentional reconnect (suppresses one close)
+        await connection.handleReconnect();
+        expect(connection.getState()).to.equal('connected');
+
+        // Simulate a new remote close after the successful reconnect
+        connection.activeClient().emitClose(false);
+
+        await waitFor(() => connection._reconnectTimer !== null, 200);
+        await waitFor(() => connection.getState() === 'connected', 500);
+        expect(connection._suppressReconnectOnce).to.equal(false);
+    });
+
+    it('tears down and recreates socket after a connect timeout', async () => {
+        connection = new TestConnection({
+            connection: {
+                host: 'localhost',
+                port: 0,
+                connectionStrategy: { initialDelayMs: 5, maxDelayMs: 20, backoffFactor: 2 },
+            },
+            log: silentLog,
+        });
+
+        connection.queueFailures(1, 'connect timed out', 'ETIMEDOUT');
+
+        await connection.handleConnect();
+        await waitFor(() => connection.totalConnectAttempts() >= 2, 1500);
+        await waitFor(() => connection.getState() === 'connected', 1500);
+
+        expect(connection.totalConnectAttempts()).to.equal(2);
+        expect(connection.clientsCreatedCount()).to.equal(2); // new socket created on retry
+        expect(connection._currentDelay).to.equal(5); // reset after success
     });
 });

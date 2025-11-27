@@ -73,6 +73,37 @@
             }
           }
         },
+        "connectTimeoutMs": {
+          "type": "integer",
+          "title": "Connect timeout (ms)",
+          "description": "Max time to complete the TCP handshake before retrying.",
+          "default": 3000,
+          "minimum": 1,
+          "examples": [2000, 3000]
+        },
+        "connectValidationCommand": {
+          "type": "string",
+          "title": "Connect validation command",
+          "description": "MT-SICS command sent immediately after TCP connect to confirm the scale responds. Set to 'none' to disable.",
+          "default": "S",
+          "examples": ["S", "SI", "none"]
+        },
+        "connectValidationTimeoutMs": {
+          "type": "integer",
+          "title": "Connect validation timeout (ms)",
+          "description": "Timeout for the validation command.",
+          "default": 3000,
+          "minimum": 1,
+          "examples": [2000, 3000]
+        },
+        "tcpKeepaliveMs": {
+          "type": "integer",
+          "title": "TCP keepalive (ms)",
+          "description": "TCP keepalive interval. Set to 0 to disable.",
+          "default": 15000,
+          "minimum": 0,
+          "examples": [15000]
+        },
         "pollingInterval": {
           "$id": "/properties/pollingInterval",
           "type": "integer",

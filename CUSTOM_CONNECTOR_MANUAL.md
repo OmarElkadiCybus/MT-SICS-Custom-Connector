@@ -29,14 +29,19 @@ Key fields from `MtsicsConnection.json`:
 | `eol` | Line ending per command | `\r\n` |
 | `encoding` | Payload charset | `ascii` |
 | `connectionStrategy` | Reconnect backoff (`initialDelayMs`, `maxDelayMs`, `backoffFactor`) | `{1000, 30000, 2}` |
+| `connectTimeoutMs` | Handshake timeout before retry | `3000` |
+| `connectValidationCommand` | MT-SICS probe sent right after TCP connect (set to `none` to disable) | `S` |
+| `connectValidationTimeoutMs` | Timeout for the validation probe | `3000` |
+| `tcpKeepaliveMs` | TCP keepalive interval to surface half-open sockets | `15000` |
 
-Reconnect behavior: if the scale is unreachable or mid-boot, the connector fails the TCP handshake after `CONNECT_TIMEOUT_MS`, rebuilds the socket, and retries using the `connectionStrategy` backoff. No manual toggle needed after a power cycle. Half-open sockets are torn down via keepalive so retries can resume.
+Reconnect behavior: if the scale is unreachable or mid-boot, the connector fails the TCP handshake after `connectTimeoutMs`, rebuilds the socket, and retries using the `connectionStrategy` backoff. After a successful TCP handshake, it immediately sends `connectValidationCommand` (default `S`) to confirm the scale is responsive; if that times out or fails, the socket is closed and retried. Keepalive (`tcpKeepaliveMs`) helps surface half-open sockets so retries can resume.
 
 Practical tuning:
 - `connectionStrategy.initialDelayMs`: first retry delay; set higher if the scale needs a long boot.
 - `connectionStrategy.maxDelayMs`: cap for exponential backoff; keep it below your operational SLA.
-- `CONNECT_TIMEOUT_MS`: shorter helps fail fast when unplugged; longer helps during device boot.
-- `TCP_KEEPALIVE_MS`: leave at default; lower it only if you see stalled connections with no data/FINs.
+- `connectTimeoutMs`: shorter helps fail fast when unplugged; longer helps during device boot.
+- `connectValidationCommand`/`connectValidationTimeoutMs`: leave the defaults if `S` is safe; set to `none` to disable validation if your device refuses early probes.
+- `tcpKeepaliveMs`: leave at default; lower it only if you see stalled connections with no data/FINs. 
 
 ## 3. Endpoints
 Common fields:
