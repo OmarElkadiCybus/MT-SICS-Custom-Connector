@@ -37,7 +37,6 @@ Common fields:
 | Field | What it does | Default |
 | --- | --- | --- |
 | `command` (required) | MT-SICS command to send | — |
-| `mode` | Force `WEIGHING` or `COUNTING` | auto |
 | `timeout` | Response timeout (ms) | `5000` |
 
 Endpoint shapes:
@@ -45,12 +44,7 @@ Endpoint shapes:
 - `write`: send command/payload; trigger via `/set`.
 - `subscribe`: periodic fetch; uses `connection.pollingInterval` or endpoint `interval`.
 
-## 4. Modes
-- Auto switch to `COUNTING`: `PCS`, `PW`, `REF`
-- Auto switch to `WEIGHING`: `@`, `Z`, `T`, `TA`, `TAC`
-- Override by setting `mode` on the endpoint when a fixed state is required.
-
-## 5. Commands
+## 4. Commands
 Use these in `read/subscribe` or `write` blocks.
 
 | Command | Use | Payload (Write only) | Notes |
@@ -69,7 +63,7 @@ Use these in `read/subscribe` or `write` blocks.
 
 ### Hint: For Commands require no payload, any given payload will be discarded
 
-## 6. Response Shapes (all include `raw`)
+## 5. Response Shapes (all include `raw`)
 ```json
 // Weight (S/SI)
 {"command":"S","status":"stable","value":123.45,"unit":"g","raw":"S S 123.45 g"}
@@ -85,7 +79,7 @@ Use these in `read/subscribe` or `write` blocks.
 {"success":true,"command":"Z","status":"OK","raw":"Z A"}
 ```
 
-## 7. Snippet Gallery
+## 6. Snippet Gallery
 Read stable weight:
 ```yaml
 readStableWeight:
