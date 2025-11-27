@@ -75,14 +75,12 @@
         },
         "pollingInterval": {
           "$id": "/properties/pollingInterval",
-          "type": "string",
+          "type": "integer",
           "title": "Polling interval",
-          "description": "Cron-style schedule that defines how often the scale is polled for data.",
-          "default": "*/5 * * * * *",
-          "examples": [
-            "*/1 * * * * *",
-            "0 * * * *"
-          ]
+          "description": "Interval in seconds that defines how often the scale is polled for data.",
+          "default": 5,
+          "minimum": 1,
+          "examples": [1, 5, 60]
         }
       }
     }
